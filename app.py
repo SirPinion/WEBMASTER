@@ -69,15 +69,7 @@ def guardar_boss_nube(server, boss, pc_id, pj_name):
     except Exception as e:
         print(f"❌ Error guardando en Supabase: {e}")
 
-def borrar_boss_nube(server, boss):
-    try:
-        res = supabase.table('timers_bosses').select('timers').eq('server', server).execute()
-        current_timers = (res.data[0]['timers'] if res.data and res.data[0]['timers'] else {})
-        if boss in current_timers:
-            del current_timers[boss]
-            supabase.table('timers_bosses').update({'timers': current_timers}).eq('server', server).execute()
-    except Exception as e:
-        print(f"❌ Error reseteando en Supabase: {e}")
+
 
 def actualizar_heartbeat_nube(server, pc_id, pj_name):
     try:
@@ -89,6 +81,15 @@ def actualizar_heartbeat_nube(server, pc_id, pj_name):
     except Exception as e:
         print(f"Error heartbeat: {e}")
 
+def borrar_boss_nube(server, boss):
+    try:
+        res = supabase.table('timers_bosses').select('timers').eq('server', server).execute()
+        current_timers = (res.data[0]['timers'] if res.data and res.data[0]['timers'] else {})
+        if boss in current_timers:
+            del current_timers[boss]
+            supabase.table('timers_bosses').update({'timers': current_timers}).eq('server', server).execute()
+    except Exception as e:
+        print(f"❌ Error reseteando en Supabase: {e}")
 
 HTML_LAYOUT = """
 <!DOCTYPE html>
