@@ -1,5 +1,6 @@
 import os
 import json
+import uuid
 from datetime import datetime, timedelta
 from flask import Flask, render_template_string, jsonify, request, session, redirect, url_for
 from supabase import create_client, Client
@@ -37,28 +38,37 @@ COOLDOWNS = {
 
 SERVIDORES = ["Server 1", "Server 2", "Server 3", "Server 20"]
 
-# === FUNCIONES DE BASE DE DATOS ===
+# === ENLACE DIRECTO DE DESCARGA DESDE DRIVE ===
+LINK_DESCARGA_DRIVE = "https://drive.google.com/file/d/1w__NqyI529st-24Rj3iRR5crVxMa9NrP/view?usp=sharing"
+
+# === FUNCIONES DE BASE DE DATOS Y AUTENTICACIÓN ===
 def validar_usuario(username, password):
     try:
-        # Limpiar espacios accidentales
         usr_clean = username.strip() if username else ""
         pwd_clean = password.strip() if password else ""
-
-        print(f"🔍 Intentando validar usuario: '{usr_clean}'")
         res = supabase.table('usuarios').select('*').eq('username', usr_clean).eq('password', pwd_clean).execute()
         
         if res.data and len(res.data) > 0:
             user = res.data[0]
             if user.get('activo', False):
-                print(f"✅ Usuario valido y activo: {user['username']} (Rol: {user.get('role')})")
+                # Generar nuevo token único de sesión para desalojar sesiones anteriores
+                new_token = str(uuid.uuid4())
+                supabase.table('usuarios').update({'current_token': new_token}).eq('id', user['id']).execute()
+                user['current_token'] = new_token
                 return user
-            else:
-                print(f"⚠️ Usuario encontrado pero está INACTIVO: {usr_clean}")
-        else:
-            print(f"❌ Usuario o contraseña incorrectos en Supabase para: '{usr_clean}'")
     except Exception as e:
-        print(f"❌ Error grave validando usuario en Supabase: {e}")
+        print(f"Error validando usuario: {e}")
     return None
+
+def validar_token_activo(username, token):
+    try:
+        res = supabase.table('usuarios').select('current_token').eq('username', username).execute()
+        if res.data and len(res.data) > 0:
+            db_token = res.data[0].get('current_token')
+            return db_token == token
+    except Exception as e:
+        print(f"Error verificando token activo: {e}")
+    return False
 
 def obtener_datos_nube():
     try:
@@ -197,6 +207,7 @@ HTML_LAYOUT = """
         h1 { font-size: 1.8rem; margin: 0; color: #fff; text-shadow: 0 0 10px rgba(123, 44, 191, 0.5); }
         .top-links { display: flex; gap: 10px; align-items: center; }
         .top-links a { color: var(--accent-glow); text-decoration: none; font-weight: bold; font-size: 0.9rem; padding: 6px 12px; background: #141126; border-radius: 6px; border: 1px solid var(--card-border); }
+        .btn-download { background: #2ecc71 !important; color: #000 !important; font-weight: bold; border-color: #27ae60 !important; }
         .controls-bar { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-bottom: 25px; background: #100d21; padding: 12px 20px; border-radius: 12px; border: 1px solid var(--card-border); }
         .view-btn { background: #1e1938; border: 1px solid var(--card-border); color: var(--text-primary); padding: 10px 18px; font-size: 0.95rem; font-weight: 600; border-radius: 8px; cursor: pointer; }
         .view-btn.active { background: var(--accent-purple); border-color: var(--accent-glow); color: #fff; }
@@ -228,6 +239,7 @@ HTML_LAYOUT = """
     <header>
         <h1>⚔️ MONITOR MUDREAM ⚔️</h1>
         <div class="top-links">
+            <a href="{{ link_drive }}" target="_blank" class="btn-download">⬇️ Descargar Bot (.exe)</a>
             {% if session.get('role') == 'admin' %}
                 <a href="/admin" style="border-color:#9d4edd; background:#7b2cbf; color:#fff;">⚙️ Panel Admin</a>
             {% endif %}
@@ -447,9 +459,9 @@ def login():
             session.permanent = True
             session['user'] = user['username']
             session['role'] = user.get('role', 'user')
-            print(f"🔑 Sesion iniciada correctamente para: {session['user']} con rol {session['role']}")
+            session['token'] = user.get('current_token')
             return redirect(url_for('index'))
-        return render_template_string(HTML_LOGIN, error="Usuario o contraseña incorrectos / Cuenta pendiente de activación")
+        return render_template_string(HTML_LOGIN, error="Usuario/contraseña incorrectos o cuenta inactiva.")
     return render_template_string(HTML_LOGIN)
 
 @app.route('/register', methods=['GET', 'POST'])
@@ -475,13 +487,14 @@ def logout():
 
 @app.route('/')
 def index():
-    if 'user' not in session:
+    if 'user' not in session or not validar_token_activo(session['user'], session.get('token')):
+        session.clear()
         return redirect(url_for('login'))
-    return render_template_string(HTML_LAYOUT)
+    return render_template_string(HTML_LAYOUT, link_drive=LINK_DESCARGA_DRIVE)
 
 @app.route('/admin')
 def admin():
-    if session.get('role') != 'admin':
+    if session.get('role') != 'admin' or not validar_token_activo(session['user'], session.get('token')):
         return redirect(url_for('index'))
     res = supabase.table('usuarios').select('*').execute()
     return render_template_string(HTML_ADMIN, usuarios=res.data)
@@ -510,12 +523,13 @@ def bot_auth():
     pwd = data.get("password", "").strip()
     user = validar_usuario(usr, pwd)
     if user:
-        return jsonify({"status": "ok", "message": "Autorizado"}), 200
+        return jsonify({"status": "ok", "message": "Autorizado", "token": user.get('current_token')}), 200
     return jsonify({"status": "error", "message": "Credenciales inválidas o cuenta desactivada"}), 401
 
 @app.route('/api/timers', methods=['GET'])
 def get_timers():
-    if 'user' not in session: return jsonify({"error": "No autorizado"}), 401
+    if 'user' not in session or not validar_token_activo(session['user'], session.get('token')): 
+        return jsonify({"error": "No autorizado"}), 401
     timers_map, pcs_map, pj_map, hb_map = obtener_datos_nube()
     return jsonify({"timers": timers_map, "cooldowns": COOLDOWNS, "servers": SERVIDORES, "ultimas_pcs": pcs_map, "ultimos_pjs": pj_map, "heartbeats": hb_map})
 
