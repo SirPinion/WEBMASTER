@@ -5,8 +5,12 @@ from flask import Flask, render_template_string, jsonify, request, session, redi
 from supabase import create_client, Client
 
 app = Flask(__name__)
-# Clave secreta fija para mantener la sesión iniciada sin borrarse
-app.secret_key = "mudream_master_secret_key_2026_super_segura"
+
+# === CONFIGURACIÓN DE SESIÓN Y SEGURIDAD ===
+app.secret_key = "mudream_master_secret_key_2026_super_segura_fixed"
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 # === CONEXIÓN A SUPABASE ===
 SUPABASE_URL = "https://sfdoobkwnaljgrmbzwvl.supabase.co"
@@ -36,13 +40,24 @@ SERVIDORES = ["Server 1", "Server 2", "Server 3", "Server 20"]
 # === FUNCIONES DE BASE DE DATOS ===
 def validar_usuario(username, password):
     try:
-        res = supabase.table('usuarios').select('*').eq('username', username).eq('password', password).execute()
+        # Limpiar espacios accidentales
+        usr_clean = username.strip() if username else ""
+        pwd_clean = password.strip() if password else ""
+
+        print(f"🔍 Intentando validar usuario: '{usr_clean}'")
+        res = supabase.table('usuarios').select('*').eq('username', usr_clean).eq('password', pwd_clean).execute()
+        
         if res.data and len(res.data) > 0:
             user = res.data[0]
             if user.get('activo', False):
+                print(f"✅ Usuario valido y activo: {user['username']} (Rol: {user.get('role')})")
                 return user
+            else:
+                print(f"⚠️ Usuario encontrado pero está INACTIVO: {usr_clean}")
+        else:
+            print(f"❌ Usuario o contraseña incorrectos en Supabase para: '{usr_clean}'")
     except Exception as e:
-        print(f"Error validando usuario: {e}")
+        print(f"❌ Error grave validando usuario en Supabase: {e}")
     return None
 
 def obtener_datos_nube():
@@ -115,7 +130,7 @@ HTML_LOGIN = """
         input { width: 100%; padding: 10px; margin: 10px 0; border-radius: 6px; border: 1px solid #2a244d; background: #0a0814; color: #fff; box-sizing: border-box; }
         button { width: 100%; padding: 10px; border-radius: 6px; border: none; background: #7b2cbf; color: white; font-weight: bold; cursor: pointer; margin-top: 10px; }
         button:hover { background: #9d4edd; }
-        .error { color: #ff4757; font-size: 0.85rem; margin-top: 10px; }
+        .error { color: #ff4757; font-size: 0.85rem; margin-top: 10px; font-weight: bold; }
         .success { color: #2ecc71; font-size: 0.85rem; margin-top: 10px; }
         .link-btn { display: inline-block; margin-top: 15px; color: #8e85b8; font-size: 0.85rem; text-decoration: none; }
         .link-btn:hover { color: #fff; }
@@ -425,12 +440,14 @@ HTML_ADMIN = """
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        usr = request.form.get('username')
-        pwd = request.form.get('password')
+        usr = request.form.get('username', '').strip()
+        pwd = request.form.get('password', '').strip()
         user = validar_usuario(usr, pwd)
         if user:
+            session.permanent = True
             session['user'] = user['username']
-            session['role'] = user['role']
+            session['role'] = user.get('role', 'user')
+            print(f"🔑 Sesion iniciada correctamente para: {session['user']} con rol {session['role']}")
             return redirect(url_for('index'))
         return render_template_string(HTML_LOGIN, error="Usuario o contraseña incorrectos / Cuenta pendiente de activación")
     return render_template_string(HTML_LOGIN)
@@ -438,15 +455,13 @@ def login():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
-        usr = request.form.get('username')
-        pwd = request.form.get('password')
+        usr = request.form.get('username', '').strip()
+        pwd = request.form.get('password', '').strip()
         try:
-            # Comprobar si ya existe
             exist = supabase.table('usuarios').select('*').eq('username', usr).execute()
             if exist.data and len(exist.data) > 0:
                 return render_template_string(HTML_REGISTER, error="El nombre de usuario ya está ocupado")
             
-            # Registrar usuario inactivo
             supabase.table('usuarios').insert({'username': usr, 'password': pwd, 'activo': False, 'role': 'user'}).execute()
             return render_template_string(HTML_LOGIN, msg="✅ Registro solicitado. El administrador debe activar tu cuenta.")
         except Exception as e:
@@ -474,8 +489,8 @@ def admin():
 @app.route('/admin/crear', methods=['POST'])
 def admin_crear():
     if session.get('role') != 'admin': return redirect(url_for('index'))
-    usr = request.form.get('username')
-    pwd = request.form.get('password')
+    usr = request.form.get('username', '').strip()
+    pwd = request.form.get('password', '').strip()
     supabase.table('usuarios').insert({'username': usr, 'password': pwd, 'activo': True, 'role': 'user'}).execute()
     return redirect(url_for('admin'))
 
@@ -488,12 +503,11 @@ def admin_toggle(user_id):
         supabase.table('usuarios').update({'activo': not estado_actual}).eq('id', user_id).execute()
     return redirect(url_for('admin'))
 
-# API para verificación desde el BOT de la PC
 @app.route('/api/bot-auth', methods=['POST'])
 def bot_auth():
     data = request.get_json() or {}
-    usr = data.get("username")
-    pwd = data.get("password")
+    usr = data.get("username", "").strip()
+    pwd = data.get("password", "").strip()
     user = validar_usuario(usr, pwd)
     if user:
         return jsonify({"status": "ok", "message": "Autorizado"}), 200
