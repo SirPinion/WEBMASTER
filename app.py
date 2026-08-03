@@ -8,7 +8,7 @@ app = Flask(__name__)
 
 # === CONEXIÓN A SUPABASE ===
 SUPABASE_URL = "https://sfdoobkwnaljgrmbzwvl.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmZG9vYmt3namdybWJ6d3ZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU3NDgzMjcsImV4cCI6MjEwMTMyNDMyN30.ZvkJqP9QiDFAi9syxeMnam6gOlVMTMhiD_wEudqt11I"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmZG9vYmt3bmFsamdybWJ6d3ZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU3NDgzMjcsImV4cCI6MjEwMTMyNDMyN30.ZvkJqP9QiDFAi9syxeMnam6gOlVMTMhiD_wEudqt11I"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -214,28 +214,30 @@ HTML_LAYOUT = """
             } catch (e) { console.error("Error pidiendo timers:", e); }
         }
 
-        // ENVIAR ACCIÓN RECRITO DE FORMA INDESTRUCTIBLE
-        async function enviarAccion(endpoint, server, boss) {
-            try {
-                const params = new URLSearchParams();
-                params.append('server', server);
-                params.append('boss', boss);
-                params.append('pc_id', 'Navegador Web');
-                params.append('pj_name', 'Web');
+        // MANEJADOR GLOBAL DE CLIC (Garantiza ejecución sin romper etiquetas HTML)
+        document.addEventListener('click', async function(e) {
+            const target = e.target;
+            if (target && target.classList.contains('btn-action')) {
+                const action = target.getAttribute('data-action');
+                const server = target.getAttribute('data-server');
+                const boss = target.getAttribute('data-boss');
 
-                const res = await fetch('/api/' + endpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: params
-                });
-
-                if (res.ok) {
-                    pedirTimers();
-                } else {
-                    console.error("Error en respuesta:", await res.text());
+                if (action && server && boss) {
+                    try {
+                        const res = await fetch('/api/' + action, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ server: server, boss: boss, pc_id: "Navegador Web", pj_name: "Web" })
+                        });
+                        if (res.ok) {
+                            pedirTimers();
+                        }
+                    } catch (err) {
+                        console.error("Error enviando acción:", err);
+                    }
                 }
-            } catch (e) { console.error("Error enviando acción:", e); }
-        }
+            }
+        });
 
         function render() {
             const container = document.getElementById('dashboard');
@@ -326,8 +328,8 @@ HTML_LAYOUT = """
                             </div>
                             ${displayTimer}
                             <div>
-                                <button class="btn-action" onclick="enviarAccion('kill', '${svr}', '${bossName}')">⚔️ Kill</button>
-                                ${statusState !== 'alive' ? `<button class="btn-action btn-reset" onclick="enviarAccion('reset', '${svr}', '${bossName}')">✖</button>` : ''}
+                                <button class="btn-action" data-action="kill" data-server="${svr}" data-boss="${bossName}">⚔️ Kill</button>
+                                ${statusState !== 'alive' ? `<button class="btn-action btn-reset" data-action="reset" data-server="${svr}" data-boss="${bossName}">✖</button>` : ''}
                             </div>
                         </div>
                     `;
@@ -344,7 +346,7 @@ HTML_LAYOUT = """
 </html>
 """
 
-# === RUTAS API ADAPTABLES (RECIBEN JSON O FORM) ===
+# === RUTAS API ===
 @app.route('/')
 def index():
     return render_template_string(HTML_LAYOUT)
@@ -358,16 +360,9 @@ def get_timers():
     timers_map, pcs_map, pj_map, hb_map = obtener_datos_nube()
     return jsonify({"timers": timers_map, "cooldowns": COOLDOWNS, "servers": SERVIDORES, "ultimas_pcs": pcs_map, "ultimos_pjs": pj_map, "heartbeats": hb_map})
 
-def extraer_parametros(req):
-    """ Extrae datos de la petición ya sea venida como JSON o como URL-Encoded """
-    data = req.get_json(silent=True)
-    if not data:
-        data = req.form
-    return data or {}
-
 @app.route('/api/heartbeat', methods=['POST'])
 def heartbeat():
-    data = extraer_parametros(request)
+    data = request.get_json(silent=True) or request.form or {}
     svr = data.get("server")
     pc_id = data.get("pc_id", "Desconocida")
     pj_name = data.get("pj_name", "Desconocido")
@@ -379,7 +374,7 @@ def heartbeat():
 
 @app.route('/api/kill', methods=['POST'])
 def kill_boss():
-    data = extraer_parametros(request)
+    data = request.get_json(silent=True) or request.form or {}
     svr = data.get("server")
     boss = data.get("boss")
     pc_id = data.get("pc_id", "Navegador Web")
@@ -392,7 +387,7 @@ def kill_boss():
 
 @app.route('/api/reset', methods=['POST'])
 def reset_boss():
-    data = extraer_parametros(request)
+    data = request.get_json(silent=True) or request.form or {}
     svr = data.get("server")
     boss = data.get("boss")
     
