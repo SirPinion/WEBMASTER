@@ -154,8 +154,10 @@ HTML_LAYOUT = """
         .status-alive { color: var(--alive-green); border: 1px solid var(--alive-green); }
         .status-cd { color: var(--cd-red); border: 1px solid var(--cd-red); }
         .status-window { color: var(--window-yellow); border: 1px solid var(--window-yellow); }
-        .btn-action { background: var(--accent-purple); border: none; color: white; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.85rem; }
+        .btn-action { background: var(--accent-purple); border: none; color: white; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.85rem; }
+        .btn-action:hover { background: var(--accent-glow); }
         .btn-reset { background: #2a2347; color: #aaa; margin-left: 4px; }
+        .btn-reset:hover { background: #ff4757; color: #fff; }
     </style>
 </head>
 <body>
@@ -192,18 +194,22 @@ HTML_LAYOUT = """
                 const res = await fetch('/api/timers');
                 estadoWeb = await res.json();
                 render();
-            } catch (e) { console.error(e); }
+            } catch (e) { console.error("Error pidiendo timers:", e); }
         }
 
         async function enviarAccion(endpoint, server, boss) {
             try {
-                await fetch(`/api/${endpoint}`, {
+                const res = await fetch('/api/' + endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ server, boss, pc_id: "Navegador Web", pj_name: "Web" })
+                    body: JSON.stringify({ server: server, boss: boss, pc_id: "Navegador Web", pj_name: "Web" })
                 });
-                pedirTimers();
-            } catch (e) { console.error(e); }
+                if (res.ok) {
+                    pedirTimers();
+                } else {
+                    console.error("Error en respuesta:", await res.text());
+                }
+            } catch (e) { console.error("Error enviando acción:", e); }
         }
 
         function render() {
@@ -287,6 +293,10 @@ HTML_LAYOUT = """
 
                     if (statusState === 'alive') displayTimer = `<div class="timer-badge status-alive">🟢 ¡VIVO!</div>`;
 
+                    // Sanitizamos las comillas para evitar errores de sintaxis en JS
+                    const svrSafe = svr.replace(/'/g, "\\'");
+                    const bossSafe = bossName.replace(/'/g, "\\'");
+
                     htmlContent += `
                         <div class="boss-row">
                             <div>
@@ -295,8 +305,8 @@ HTML_LAYOUT = """
                             </div>
                             ${displayTimer}
                             <div>
-                                <button class="btn-action" onclick="enviarAccion('kill', '${svr}', '${bossName}')">⚔️ Kill</button>
-                                ${statusState !== 'alive' ? `<button class="btn-action btn-reset" onclick="enviarAccion('reset', '${svr}', '${bossName}')">✖</button>` : ''}
+                                <button class="btn-action" onclick="enviarAccion('kill', '${svrSafe}', '${bossSafe}')">⚔️ Kill</button>
+                                ${statusState !== 'alive' ? `<button class="btn-action btn-reset" onclick="enviarAccion('reset', '${svrSafe}', '${bossSafe}')">✖</button>` : ''}
                             </div>
                         </div>
                     `;
@@ -320,7 +330,6 @@ def index():
 
 @app.route('/ping')
 def ping():
-    # Endpoint liviano exclusivamente para UptimeRobot
     return "OK", 200
 
 @app.route('/api/timers', methods=['GET'])
