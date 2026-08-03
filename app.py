@@ -5,14 +5,18 @@ from flask import Flask, render_template_string, jsonify, request
 
 app = Flask(__name__)
 
-# Configuración de Bosses y sus respawns en minutos
+# Configuración de Bosses y Cooldowns base (en minutos)
 COOLDOWNS = {
-    "Muggron": 180, 
+    "Muggron (Barracks)": 180,
+    "Muggron (Crywolf)": 180,
     "Kharzul": 420, 
     "Vescrya": 420,
     "Borgar": 120, 
-    "Dreadhorn": 60, 
-    "Moltragon": 60
+    "Dreadhorn": 60,
+    "Yellow Goblin": 600,  # 10 Horas
+    "Blue Goblin": 600,    # 10 Horas
+    "Red Goblin": 600,     # 10 Horas
+    "Red Dragon": 720      # 12 Horas
 }
 
 SERVIDORES = ["Server 1", "Server 2", "Server 3", "Server 20"]
@@ -21,7 +25,6 @@ RUTA_RESPALDO = "backup_timers.json"
 timers_servidores = {svr: {} for svr in SERVIDORES}
 ultimas_pcs_reportadas = {svr: "Sin reportes" for svr in SERVIDORES}
 
-# Cargar el archivo JSON si existe
 if os.path.exists(RUTA_RESPALDO):
     try:
         with open(RUTA_RESPALDO, "r") as f:
@@ -68,6 +71,7 @@ HTML_LAYOUT = """
             --text-secondary: #8e85b8;
             --alive-green: #2ecc71;
             --cd-red: #ff4757;
+            --window-yellow: #f1c40f;
         }
 
         body {
@@ -119,7 +123,7 @@ HTML_LAYOUT = """
 
         .grid-all {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
             gap: 20px;
         }
 
@@ -155,32 +159,35 @@ HTML_LAYOUT = """
             align-items: center;
         }
 
-        .boss-name { font-weight: bold; font-size: 1rem; }
+        .boss-name { font-weight: bold; font-size: 0.95rem; }
         .boss-respawn { font-size: 0.75rem; color: var(--text-secondary); }
 
         .timer-badge {
             font-family: monospace;
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: bold;
-            padding: 4px 10px;
+            padding: 4px 8px;
             border-radius: 6px;
             text-align: center;
+            min-width: 110px;
         }
 
         .status-alive { color: var(--alive-green); border: 1px solid var(--alive-green); }
         .status-cd { color: var(--cd-red); border: 1px solid var(--cd-red); }
+        .status-window { color: var(--window-yellow); border: 1px solid var(--window-yellow); }
 
         .btn-action {
             background: var(--accent-purple);
             border: none;
             color: white;
-            padding: 6px 12px;
+            padding: 6px 10px;
             border-radius: 6px;
             cursor: pointer;
             font-weight: bold;
+            font-size: 0.85rem;
         }
 
-        .btn-reset { background: #2a2347; color: #aaa; }
+        .btn-reset { background: #2a2347; color: #aaa; margin-left: 4px; }
         .btn-reset:hover { background: var(--cd-red); color: #fff; }
     </style>
 </head>
@@ -262,41 +269,72 @@ HTML_LAYOUT = """
                 const bossesServidor = timers[svr] || {};
 
                 for (const [bossName, cdMinutos] of Object.entries(cooldowns)) {
-                    let esCooldown = false;
+                    // Si el servidor es Server 20, ocultamos los Goblins y Red Dragon
+                    if (svr === "Server 20" && ["Yellow Goblin", "Blue Goblin", "Red Goblin", "Red Dragon"].includes(bossName)) {
+                        continue;
+                    }
+
+                    let statusState = 'alive'; // 'alive', 'cd', 'window'
                     let displayTimer = '';
 
                     if (bossName in bossesServidor) {
                         const targetUnix = bossesServidor[bossName];
                         const diffSec = targetUnix - ahoraUnix;
 
-                        if (diffSec > 0) {
-                            esCooldown = true;
-                            const h = Math.floor(diffSec / 3600);
-                            const m = Math.floor((diffSec % 3600) / 60);
-                            const s = diffSec % 60;
+                        // Manejo especial de ventana de 10h a 11h para los Goblins
+                        if (["Yellow Goblin", "Blue Goblin", "Red Goblin"].includes(bossName)) {
+                            const inicioVentanaUnix = targetUnix;
+                            const finVentanaUnix = targetUnix + 3600; // 1 hora extra (11h total)
 
-                            const strH = h > 0 ? `${h}h ` : '';
-                            const strM = m < 10 ? `0${m}` : m;
-                            const strS = s < 10 ? `0${s}` : s;
-
-                            displayTimer = `<div class="timer-badge status-cd">🔴 ${strH}${strM}m ${strS}s</div>`;
+                            if (ahoraUnix < inicioVentanaUnix) {
+                                statusState = 'cd';
+                                const cdSec = inicioVentanaUnix - ahoraUnix;
+                                const h = Math.floor(cdSec / 3600);
+                                const m = Math.floor((cdSec % 3600) / 60);
+                                const s = cdSec % 60;
+                                displayTimer = `<div class="timer-badge status-cd">🔴 ${h}h ${m < 10 ? '0':''}${m}m ${s < 10 ? '0':''}${s}s</div>`;
+                            } else if (ahoraUnix >= inicioVentanaUnix && ahoraUnix <= finVentanaUnix) {
+                                statusState = 'window';
+                                const winSec = finVentanaUnix - ahoraUnix;
+                                const m = Math.floor(winSec / 60);
+                                const s = winSec % 60;
+                                displayTimer = `<div class="timer-badge status-window">🟡 VENTANA (${m}m ${s < 10 ? '0':''}${s}s)</div>`;
+                            } else {
+                                statusState = 'alive';
+                            }
+                        } else {
+                            if (diffSec > 0) {
+                                statusState = 'cd';
+                                const h = Math.floor(diffSec / 3600);
+                                const m = Math.floor((diffSec % 3600) / 60);
+                                const s = diffSec % 60;
+                                const strH = h > 0 ? `${h}h ` : '';
+                                displayTimer = `<div class="timer-badge status-cd">🔴 ${strH}${m < 10 ? '0':''}${m}m ${s < 10 ? '0':''}${s}s</div>`;
+                            }
                         }
                     }
 
-                    if (!esCooldown) {
+                    if (statusState === 'alive') {
                         displayTimer = `<div class="timer-badge status-alive">🟢 ¡VIVO!</div>`;
+                    }
+
+                    let infoText = `${cdMinutos} min`;
+                    if (["Yellow Goblin", "Blue Goblin", "Red Goblin"].includes(bossName)) {
+                        infoText = "10 - 11 Hs";
+                    } else if (bossName === "Red Dragon") {
+                        infoText = "12 Hs";
                     }
 
                     htmlContent += `
                         <div class="boss-row">
                             <div>
                                 <div class="boss-name">${bossName}</div>
-                                <div class="boss-respawn">${cdMinutos} min</div>
+                                <div class="boss-respawn">${infoText}</div>
                             </div>
                             ${displayTimer}
                             <div>
                                 <button class="btn-action" onclick="enviarAccion('kill', '${svr}', '${bossName}')">⚔️ Kill</button>
-                                ${esCooldown ? `<button class="btn-action btn-reset" onclick="enviarAccion('reset', '${svr}', '${bossName}')">✖</button>` : ''}
+                                ${statusState !== 'alive' ? `<button class="btn-action btn-reset" onclick="enviarAccion('reset', '${svr}', '${bossName}')">✖</button>` : ''}
                             </div>
                         </div>
                     `;
@@ -324,11 +362,12 @@ def get_timers():
     respuesta = {}
     ahora = datetime.now()
     for svr, bosses in timers_servidores.items():
-        respuesta[svr] = {
-            boss: int(dt.timestamp()) 
-            for boss, dt in bosses.items() 
-            if dt > ahora
-        }
+        respuesta[svr] = {}
+        for boss, dt in bosses.items():
+            # Para los goblins la ventana vence a las 11h (+660 min)
+            max_time = dt + timedelta(minutes=60) if "Goblin" in boss else dt
+            if max_time > ahora:
+                respuesta[svr][boss] = int(dt.timestamp())
     return jsonify({
         "timers": respuesta, 
         "cooldowns": COOLDOWNS, 
