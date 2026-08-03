@@ -6,9 +6,9 @@ from supabase import create_client, Client
 
 app = Flask(__name__)
 
-# === CONEXIÓN A SUPABASE (NUBE) ===
-SUPABASE_URL = "https://sfdoobkwnaljgrmbzwvl.supabase.co/rest/v1/" # 👈 Pega tu URL de Supabase acá
-SUPABASE_KEY = "sb_publishable_Gw39E2iFIXav1paKHFhd0w_q2FgHkgG"               # 👈 Pega tu API Key de Supabase acá
+# === CONEXIÓN A SUPABASE ===
+SUPABASE_URL = "https://TU_PROYECTO.supabase.co" # 👈 Pega tu URL de Supabase
+SUPABASE_KEY = "TU_ANON_KEY_AQUI"               # 👈 Pega tu API Key de Supabase
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -30,46 +30,57 @@ SERVIDORES = ["Server 1", "Server 2", "Server 3", "Server 20"]
 def obtener_datos_nube():
     try:
         res = supabase.table('timers_bosses').select('*').execute()
-        timers_map = {}
-        pcs_map = {}
+        timers_map, pcs_map, pj_map, heartbeat_map = {}, {}, {}, {}
+        
         for row in res.data:
             svr = row['server']
-            # Convertimos strings ISO a timestamp UNIX
             boss_timers = {}
-            for boss, dt_str in row['timers'].items():
+            for boss, dt_str in row.get('timers', {}).items():
                 dt_obj = datetime.fromisoformat(dt_str)
                 if dt_obj > datetime.now():
                     boss_timers[boss] = int(dt_obj.timestamp())
+            
             timers_map[svr] = boss_timers
-            pcs_map[svr] = row['last_pc']
-        return timers_map, pcs_map
+            pcs_map[svr] = row.get('last_pc', 'Sin reportes')
+            pj_map[svr] = row.get('last_pj', 'Desconocido')
+            heartbeat_map[svr] = row.get('last_heartbeat', None)
+            
+        return timers_map, pcs_map, pj_map, heartbeat_map
     except Exception as e:
         print(f"Error leyendo Supabase: {e}")
-        return {svr: {} for svr in SERVIDORES}, {svr: "Sin reportes" for svr in SERVIDORES}
+        return {svr: {} for svr in SERVIDORES}, {svr: "Sin reportes" for svr in SERVIDORES}, {svr: "Desconocido" for svr in SERVIDORES}, {svr: None for svr in SERVIDORES}
 
-def guardar_boss_nube(server, boss, pc_id):
+def guardar_boss_nube(server, boss, pc_id, pj_name):
     try:
-        # 1. Leemos el mapa de timers actual del servidor
         res = supabase.table('timers_bosses').select('timers').eq('server', server).execute()
         current_timers = res.data[0]['timers'] if res.data else {}
         
-        # 2. Actualizamos el nuevo cooldown
         nueva_fecha = datetime.now() + timedelta(minutes=COOLDOWNS[boss])
         current_timers[boss] = nueva_fecha.isoformat()
 
-        # 3. Guardamos en la base de datos remota
         supabase.table('timers_bosses').update({
             'timers': current_timers,
-            'last_pc': pc_id
+            'last_pc': pc_id,
+            'last_pj': pj_name,
+            'last_heartbeat': datetime.now().isoformat()
         }).eq('server', server).execute()
     except Exception as e:
         print(f"Error guardando en Supabase: {e}")
+
+def actualizar_heartbeat_nube(server, pc_id, pj_name):
+    try:
+        supabase.table('timers_bosses').update({
+            'last_pc': pc_id,
+            'last_pj': pj_name,
+            'last_heartbeat': datetime.now().isoformat()
+        }).eq('server', server).execute()
+    except Exception as e:
+        print(f"Error heartbeat: {e}")
 
 def borrar_boss_nube(server, boss):
     try:
         res = supabase.table('timers_bosses').select('timers').eq('server', server).execute()
         current_timers = res.data[0]['timers'] if res.data else {}
-        
         if boss in current_timers:
             del current_timers[boss]
             supabase.table('timers_bosses').update({'timers': current_timers}).eq('server', server).execute()
@@ -138,11 +149,24 @@ HTML_LAYOUT = """
 
         .server-header {
             display: flex; justify-content: space-between; align-items: center;
-            border-bottom: 2px solid var(--card-border); padding-bottom: 10px; margin-bottom: 12px;
+            border-bottom: 2px solid var(--card-border); padding-bottom: 10px; margin-bottom: 8px;
         }
 
         .server-title { font-size: 1.4rem; font-weight: bold; color: #fff; }
-        .pc-badge { font-size: 0.75rem; background: #251f47; color: var(--text-secondary); padding: 4px 8px; border-radius: 12px; }
+        
+        .bot-status-container {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 12px; font-size: 0.8rem; background: #0c091f; padding: 6px 10px; border-radius: 6px;
+        }
+
+        .status-dot {
+            display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px;
+        }
+        .dot-online { background-color: var(--alive-green); box-shadow: 0 0 8px var(--alive-green); }
+        .dot-offline { background-color: var(--cd-red); box-shadow: 0 0 8px var(--cd-red); }
+
+        .pc-badge { font-size: 0.75rem; color: var(--text-secondary); }
+        .pj-badge { font-size: 0.8rem; color: #b8acff; font-weight: bold; }
 
         .boss-list { display: flex; flex-direction: column; gap: 10px; }
 
@@ -214,7 +238,7 @@ HTML_LAYOUT = """
                 await fetch(`/api/${endpoint}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ server, boss, pc_id: "Navegador Web" })
+                    body: JSON.stringify({ server, boss, pc_id: "Navegador Web", pj_name: "Web" })
                 });
                 pedirTimers();
             } catch (e) { console.error(e); }
@@ -228,6 +252,8 @@ HTML_LAYOUT = """
             const timers = estadoWeb.timers || {};
             const cooldowns = estadoWeb.cooldowns || {};
             const ultimosReportes = estadoWeb.ultimas_pcs || {};
+            const ultimosPjs = estadoWeb.ultimos_pjs || {};
+            const heartbeats = estadoWeb.heartbeats || {};
             const ahoraUnix = Math.floor(Date.now() / 1000);
 
             const servidoresAMostrar = (modoVista === 'TODOS') ? serversDisponibles : [modoVista];
@@ -238,11 +264,29 @@ HTML_LAYOUT = """
                 serverBlock.className = 'server-block';
 
                 const pcOrigen = ultimosReportes[svr] || 'Sin reportes';
+                const pjOrigen = ultimosPjs[svr] || 'Desconocido';
+                
+                // Si el bot envió señal en los últimos 30 segundos se considera ONLINE
+                let esOnline = false;
+                if (heartbeats[svr]) {
+                    const hbUnix = Math.floor(new Date(heartbeats[svr]).getTime() / 1000);
+                    if ((ahoraUnix - hbUnix) <= 30) {
+                        esOnline = true;
+                    }
+                }
+
+                const statusHtml = esOnline 
+                    ? `<span><span class="status-dot dot-online"></span><strong style="color:#2ecc71;">ONLINE</strong></span>`
+                    : `<span><span class="status-dot dot-offline"></span><strong style="color:#ff4757;">OFFLINE</strong></span>`;
 
                 let htmlContent = `
                     <div class="server-header">
                         <div class="server-title">${svr}</div>
-                        <div class="pc-badge">Origen: ${pcOrigen}</div>
+                        <div>${statusHtml}</div>
+                    </div>
+                    <div class="bot-status-container">
+                        <div class="pj-badge">👤 PJ: ${pjOrigen}</div>
+                        <div class="pc-badge">💻 PC: ${pcOrigen}</div>
                     </div>
                     <div class="boss-list">
                 `;
@@ -338,13 +382,27 @@ def index():
 
 @app.route('/api/timers', methods=['GET'])
 def get_timers():
-    timers_map, pcs_map = obtener_datos_nube()
+    timers_map, pcs_map, pj_map, hb_map = obtener_datos_nube()
     return jsonify({
         "timers": timers_map, 
         "cooldowns": COOLDOWNS, 
         "servers": SERVIDORES,
-        "ultimas_pcs": pcs_map
+        "ultimas_pcs": pcs_map,
+        "ultimos_pjs": pj_map,
+        "heartbeats": hb_map
     })
+
+@app.route('/api/heartbeat', methods=['POST'])
+def heartbeat():
+    data = request.get_json()
+    svr = data.get("server")
+    pc_id = data.get("pc_id", "Desconocida")
+    pj_name = data.get("pj_name", "Desconocido")
+
+    if svr in SERVIDORES:
+        actualizar_heartbeat_nube(svr, pc_id, pj_name)
+        return jsonify({"status": "ok"}), 200
+    return jsonify({"status": "error"}), 400
 
 @app.route('/api/kill', methods=['POST'])
 def kill_boss():
@@ -352,9 +410,10 @@ def kill_boss():
     svr = data.get("server")
     boss = data.get("boss")
     pc_id = data.get("pc_id", "Desconocida")
+    pj_name = data.get("pj_name", "Desconocido")
 
     if svr in SERVIDORES and boss in COOLDOWNS:
-        guardar_boss_nube(svr, boss, pc_id)
+        guardar_boss_nube(svr, boss, pc_id, pj_name)
         return jsonify({"status": "ok"}), 200
     return jsonify({"status": "error"}), 400
 
