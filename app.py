@@ -5,7 +5,8 @@ from flask import Flask, render_template_string, jsonify, request, session, redi
 from supabase import create_client, Client
 
 app = Flask(__name__)
-app.secret_key = "mudream_secret_key_super_segura"  # Cambiar por una clave secreta propia
+# Clave secreta fija para mantener la sesión iniciada sin borrarse
+app.secret_key = "mudream_master_secret_key_2026_super_segura"
 
 # === CONEXIÓN A SUPABASE ===
 SUPABASE_URL = "https://sfdoobkwnaljgrmbzwvl.supabase.co"
@@ -100,7 +101,7 @@ def borrar_boss_nube(server, boss):
     except Exception as e:
         print(f"Error reseteando en Supabase: {e}")
 
-# === VISTAS HTML ===
+# === PLANTILLAS HTML ===
 HTML_LOGIN = """
 <!DOCTYPE html>
 <html lang="es">
@@ -109,22 +110,59 @@ HTML_LOGIN = """
     <title>🔐 Acceso - Monitor MuDream</title>
     <style>
         body { background: #0a0814; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .card { background: #141126; border: 1px solid #2a244d; border-radius: 12px; padding: 30px; width: 320px; text-align: center; }
+        .card { background: #141126; border: 1px solid #2a244d; border-radius: 12px; padding: 30px; width: 340px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
         h2 { margin-top: 0; color: #9d4edd; }
         input { width: 100%; padding: 10px; margin: 10px 0; border-radius: 6px; border: 1px solid #2a244d; background: #0a0814; color: #fff; box-sizing: border-box; }
-        button { width: 100%; padding: 10px; border-radius: 6px; border: none; background: #7b2cbf; color: white; font-weight: bold; cursor: pointer; }
+        button { width: 100%; padding: 10px; border-radius: 6px; border: none; background: #7b2cbf; color: white; font-weight: bold; cursor: pointer; margin-top: 10px; }
+        button:hover { background: #9d4edd; }
         .error { color: #ff4757; font-size: 0.85rem; margin-top: 10px; }
+        .success { color: #2ecc71; font-size: 0.85rem; margin-top: 10px; }
+        .link-btn { display: inline-block; margin-top: 15px; color: #8e85b8; font-size: 0.85rem; text-decoration: none; }
+        .link-btn:hover { color: #fff; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2>⚔️ ACCESO ⚔️</h2>
+        <h2>⚔️ MUDREAM LOGIN ⚔️</h2>
         <form method="POST" action="/login">
             <input type="text" name="username" placeholder="Usuario" required>
             <input type="password" name="password" placeholder="Contraseña" required>
             <button type="submit">Ingresar</button>
         </form>
         {% if error %}<div class="error">{{ error }}</div>{% endif %}
+        {% if msg %}<div class="success">{{ msg }}</div>{% endif %}
+        <a href="/register" class="link-btn">¿No tenés cuenta? Registrate acá</a>
+    </div>
+</body>
+</html>
+"""
+
+HTML_REGISTER = """
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>📝 Registro - Monitor MuDream</title>
+    <style>
+        body { background: #0a0814; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background: #141126; border: 1px solid #2a244d; border-radius: 12px; padding: 30px; width: 340px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        h2 { margin-top: 0; color: #9d4edd; }
+        input { width: 100%; padding: 10px; margin: 10px 0; border-radius: 6px; border: 1px solid #2a244d; background: #0a0814; color: #fff; box-sizing: border-box; }
+        button { width: 100%; padding: 10px; border-radius: 6px; border: none; background: #7b2cbf; color: white; font-weight: bold; cursor: pointer; margin-top: 10px; }
+        .error { color: #ff4757; font-size: 0.85rem; margin-top: 10px; }
+        .link-btn { display: inline-block; margin-top: 15px; color: #8e85b8; font-size: 0.85rem; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>📝 CREAR CUENTA</h2>
+        <form method="POST" action="/register">
+            <input type="text" name="username" placeholder="Usuario deseado" required>
+            <input type="password" name="password" placeholder="Contraseña" required>
+            <button type="submit">Solicitar Registro</button>
+        </form>
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+        <a href="/login" class="link-btn">⬅️ Volver al Login</a>
     </div>
 </body>
 </html>
@@ -176,7 +214,7 @@ HTML_LAYOUT = """
         <h1>⚔️ MONITOR MUDREAM ⚔️</h1>
         <div class="top-links">
             {% if session.get('role') == 'admin' %}
-                <a href="/admin">⚙️ Panel Admin</a>
+                <a href="/admin" style="border-color:#9d4edd; background:#7b2cbf; color:#fff;">⚙️ Panel Admin</a>
             {% endif %}
             <a href="/logout">🚪 Cerrar Sesión ({{ session.get('user') }})</a>
         </div>
@@ -335,39 +373,45 @@ HTML_ADMIN = """
     <title>⚙️ Panel Admin - Usuarios</title>
     <style>
         body { background: #0a0814; color: #fff; font-family: sans-serif; padding: 20px; display: flex; flex-direction: column; align-items: center; }
-        .box { background: #141126; border: 1px solid #2a244d; border-radius: 12px; padding: 20px; width: 100%; max-width: 600px; margin-bottom: 20px; }
+        .box { background: #141126; border: 1px solid #2a244d; border-radius: 12px; padding: 25px; width: 100%; max-width: 650px; }
         h2 { margin-top: 0; color: #9d4edd; }
         table { width: 100%; border-collapse: collapse; margin-top: 15px; }
         th, td { padding: 10px; border-bottom: 1px solid #2a244d; text-align: left; }
         input, select { padding: 8px; background: #0a0814; border: 1px solid #2a244d; color: white; border-radius: 6px; }
-        button { padding: 8px 14px; background: #7b2cbf; border: none; color: white; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        button { padding: 8px 14px; border: none; color: white; border-radius: 6px; cursor: pointer; font-weight: bold; }
         .btn-toggle { background: #e74c3c; }
         .btn-active { background: #2ecc71; }
-        a { color: #9d4edd; text-decoration: none; }
+        .btn-crear { background: #7b2cbf; }
+        a { color: #9d4edd; text-decoration: none; font-weight: bold; }
     </style>
 </head>
 <body>
     <div class="box">
-        <a href="/">⬅️ Volver al Dashboard</a>
-        <h2>⚙️ Gestión de Usuarios</h2>
+        <a href="/">⬅️ Volver al Monitor</a>
+        <h2>⚙️ Gestión de Usuarios (ADMIN)</h2>
         <form method="POST" action="/admin/crear">
             <input type="text" name="username" placeholder="Nuevo Usuario" required>
             <input type="text" name="password" placeholder="Contraseña" required>
-            <button type="submit">Crear Usuario</button>
+            <button type="submit" class="btn-crear">Crear Usuario</button>
         </form>
         <table>
-            <tr><th>Usuario</th><th>Contraseña</th><th>Estado</th><th>Acción</th></tr>
+            <tr><th>Usuario</th><th>Contraseña</th><th>Rol</th><th>Estado</th><th>Acción</th></tr>
             {% for u in usuarios %}
             <tr>
                 <td>{{ u.username }}</td>
                 <td>{{ u.password }}</td>
+                <td><strong style="color:{% if u.role == 'admin' %}#9d4edd{% else %}#aaa{% endif %};">{{ u.role }}</strong></td>
                 <td>{% if u.activo %}<span style="color:#2ecc71;">Activo</span>{% else %}<span style="color:#e74c3c;">Inactivo</span>{% endif %}</td>
                 <td>
+                    {% if u.username != session.get('user') %}
                     <form method="POST" action="/admin/toggle/{{ u.id }}">
                         <button type="submit" class="{% if u.activo %}btn-toggle{% else %}btn-active{% endif %}">
                             {% if u.activo %}Desactivar{% else %}Activar{% endif %}
                         </button>
                     </form>
+                    {% else %}
+                    <small style="color:#8e85b8;">Tu Cuenta</small>
+                    {% endif %}
                 </td>
             </tr>
             {% endfor %}
@@ -388,8 +432,26 @@ def login():
             session['user'] = user['username']
             session['role'] = user['role']
             return redirect(url_for('index'))
-        return render_template_string(HTML_LOGIN, error="Usuario o contraseña incorrectos / Usuario inactivo")
+        return render_template_string(HTML_LOGIN, error="Usuario o contraseña incorrectos / Cuenta pendiente de activación")
     return render_template_string(HTML_LOGIN)
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        usr = request.form.get('username')
+        pwd = request.form.get('password')
+        try:
+            # Comprobar si ya existe
+            exist = supabase.table('usuarios').select('*').eq('username', usr).execute()
+            if exist.data and len(exist.data) > 0:
+                return render_template_string(HTML_REGISTER, error="El nombre de usuario ya está ocupado")
+            
+            # Registrar usuario inactivo
+            supabase.table('usuarios').insert({'username': usr, 'password': pwd, 'activo': False, 'role': 'user'}).execute()
+            return render_template_string(HTML_LOGIN, msg="✅ Registro solicitado. El administrador debe activar tu cuenta.")
+        except Exception as e:
+            return render_template_string(HTML_REGISTER, error=f"Error al registrar: {e}")
+    return render_template_string(HTML_REGISTER)
 
 @app.route('/logout')
 def logout():
