@@ -1,16 +1,10 @@
 import os
 import json
 from datetime import datetime, timedelta, timezone
-from flask import Flask, render_template_string, jsonify, request, session, redirect, url_for
+from flask import Flask, render_template_string, jsonify, request
 from supabase import create_client, Client
 
 app = Flask(__name__)
-
-# === CONFIGURACIÓN DE SESIÓN Y SEGURIDAD ===
-app.secret_key = "mudream_master_secret_key_2026_super_segura_fixed"
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 # === CONEXIÓN A SUPABASE ===
 SUPABASE_URL = "https://sfdoobkwnaljgrmbzwvl.supabase.co"
@@ -48,24 +42,7 @@ def parsear_fecha_utc(dt_str):
             dt_obj = dt_obj.replace(tzinfo=timezone.utc)
         return dt_obj
     except Exception as e:
-        print(f"⚠️ Error parseando fecha '{dt_str}': {e}")
         return None
-
-# === FUNCIONES DE BASE DE DATOS ===
-def validar_usuario(username, password):
-    try:
-        usr_clean = username.strip() if username else ""
-        pwd_clean = password.strip() if password else ""
-
-        res = supabase.table('usuarios').select('*').eq('username', usr_clean).eq('password', pwd_clean).execute()
-        
-        if res.data and len(res.data) > 0:
-            user = res.data[0]
-            if user.get('activo', False):
-                return user
-    except Exception as e:
-        print(f"❌ Error grave validando usuario en Supabase: {e}")
-    return None
 
 def obtener_datos_nube():
     timers_map = {svr: {} for svr in SERVIDORES}
@@ -142,73 +119,7 @@ def borrar_boss_nube(server, boss):
     except Exception as e:
         print(f"❌ Error reseteando: {e}")
 
-# === PLANTILLAS HTML ===
-HTML_LOGIN = """
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>🔐 Acceso - Monitor MuDream</title>
-    <style>
-        body { background: #0a0814; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .card { background: #141126; border: 1px solid #2a244d; border-radius: 12px; padding: 30px; width: 340px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-        h2 { margin-top: 0; color: #9d4edd; }
-        input { width: 100%; padding: 10px; margin: 10px 0; border-radius: 6px; border: 1px solid #2a244d; background: #0a0814; color: #fff; box-sizing: border-box; }
-        button { width: 100%; padding: 10px; border-radius: 6px; border: none; background: #7b2cbf; color: white; font-weight: bold; cursor: pointer; margin-top: 10px; }
-        button:hover { background: #9d4edd; }
-        .error { color: #ff4757; font-size: 0.85rem; margin-top: 10px; font-weight: bold; }
-        .success { color: #2ecc71; font-size: 0.85rem; margin-top: 10px; }
-        .link-btn { display: inline-block; margin-top: 15px; color: #8e85b8; font-size: 0.85rem; text-decoration: none; }
-        .link-btn:hover { color: #fff; }
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h2>⚔️ MUDREAM LOGIN ⚔️</h2>
-        <form method="POST" action="/login">
-            <input type="text" name="username" placeholder="Usuario" required>
-            <input type="password" name="password" placeholder="Contraseña" required>
-            <button type="submit">Ingresar</button>
-        </form>
-        {% if error %}<div class="error">{{ error }}</div>{% endif %}
-        {% if msg %}<div class="success">{{ msg }}</div>{% endif %}
-        <a href="/register" class="link-btn">¿No tenés cuenta? Registrate acá</a>
-    </div>
-</body>
-</html>
-"""
-
-HTML_REGISTER = """
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>📝 Registro - Monitor MuDream</title>
-    <style>
-        body { background: #0a0814; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .card { background: #141126; border: 1px solid #2a244d; border-radius: 12px; padding: 30px; width: 340px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-        h2 { margin-top: 0; color: #9d4edd; }
-        input { width: 100%; padding: 10px; margin: 10px 0; border-radius: 6px; border: 1px solid #2a244d; background: #0a0814; color: #fff; box-sizing: border-box; }
-        button { width: 100%; padding: 10px; border-radius: 6px; border: none; background: #7b2cbf; color: white; font-weight: bold; cursor: pointer; margin-top: 10px; }
-        .error { color: #ff4757; font-size: 0.85rem; margin-top: 10px; }
-        .link-btn { display: inline-block; margin-top: 15px; color: #8e85b8; font-size: 0.85rem; text-decoration: none; }
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h2>📝 CREAR CUENTA</h2>
-        <form method="POST" action="/register">
-            <input type="text" name="username" placeholder="Usuario deseado" required>
-            <input type="password" name="password" placeholder="Contraseña" required>
-            <button type="submit">Solicitar Registro</button>
-        </form>
-        {% if error %}<div class="error">{{ error }}</div>{% endif %}
-        <a href="/login" class="link-btn">⬅️ Volver al Login</a>
-    </div>
-</body>
-</html>
-"""
-
+# === PLANTILLA WEB ===
 HTML_LAYOUT = """
 <!DOCTYPE html>
 <html lang="es">
@@ -219,10 +130,8 @@ HTML_LAYOUT = """
     <style>
         :root { --bg-dark: #0a0814; --card-bg: #141126; --card-border: #2a244d; --accent-purple: #7b2cbf; --accent-glow: #9d4edd; --text-primary: #e6e1ff; --text-secondary: #8e85b8; --alive-green: #2ecc71; --cd-red: #ff4757; --window-yellow: #f1c40f; }
         body { font-family: 'Segoe UI', sans-serif; background-color: var(--bg-dark); color: var(--text-primary); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
-        header { text-align: center; margin-bottom: 20px; width: 100%; max-width: 1200px; display: flex; justify-content: space-between; align-items: center; }
+        header { text-align: center; margin-bottom: 20px; width: 100%; max-width: 1200px; }
         h1 { font-size: 1.8rem; margin: 0; color: #fff; text-shadow: 0 0 10px rgba(123, 44, 191, 0.5); }
-        .top-links { display: flex; gap: 10px; align-items: center; }
-        .top-links a { color: var(--accent-glow); text-decoration: none; font-weight: bold; font-size: 0.9rem; padding: 6px 12px; background: #141126; border-radius: 6px; border: 1px solid var(--card-border); }
         .controls-bar { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-bottom: 25px; background: #100d21; padding: 12px 20px; border-radius: 12px; border: 1px solid var(--card-border); }
         .view-btn { background: #1e1938; border: 1px solid var(--card-border); color: var(--text-primary); padding: 10px 18px; font-size: 0.95rem; font-weight: 600; border-radius: 8px; cursor: pointer; }
         .view-btn.active { background: var(--accent-purple); border-color: var(--accent-glow); color: #fff; }
@@ -253,12 +162,6 @@ HTML_LAYOUT = """
 
     <header>
         <h1>⚔️ MONITOR MUDREAM ⚔️</h1>
-        <div class="top-links">
-            {% if session.get('role') == 'admin' %}
-                <a href="/admin" style="border-color:#9d4edd; background:#7b2cbf; color:#fff;">⚙️ Panel Admin</a>
-            {% endif %}
-            <a href="/logout">🚪 Cerrar Sesión ({{ session.get('user') }})</a>
-        </div>
     </header>
 
     <div class="controls-bar">
@@ -287,7 +190,6 @@ HTML_LAYOUT = """
         async function pedirTimers() {
             try {
                 const res = await fetch('/api/timers');
-                if (res.status === 401) { window.location.href = '/login'; return; }
                 estadoWeb = await res.json();
                 render();
             } catch (e) { console.error(e); }
@@ -343,7 +245,7 @@ HTML_LAYOUT = """
                     </div>
                     <div class="bot-status-container">
                         <div class="pj-badge">👤 PJ: ${pjOrigen}</div>
-                        <div class="pc-badge">💻 PC / User: ${pcOrigen}</div>
+                        <div class="pc-badge">💻 PC: ${pcOrigen}</div>
                     </div>
                     <div class="boss-list">
                 `;
@@ -411,144 +313,18 @@ HTML_LAYOUT = """
 </html>
 """
 
-HTML_ADMIN = """
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>⚙️ Panel Admin - Usuarios</title>
-    <style>
-        body { background: #0a0814; color: #fff; font-family: sans-serif; padding: 20px; display: flex; flex-direction: column; align-items: center; }
-        .box { background: #141126; border: 1px solid #2a244d; border-radius: 12px; padding: 25px; width: 100%; max-width: 650px; }
-        h2 { margin-top: 0; color: #9d4edd; }
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-        th, td { padding: 10px; border-bottom: 1px solid #2a244d; text-align: left; }
-        input, select { padding: 8px; background: #0a0814; border: 1px solid #2a244d; color: white; border-radius: 6px; }
-        button { padding: 8px 14px; border: none; color: white; border-radius: 6px; cursor: pointer; font-weight: bold; }
-        .btn-toggle { background: #e74c3c; }
-        .btn-active { background: #2ecc71; }
-        .btn-crear { background: #7b2cbf; }
-        a { color: #9d4edd; text-decoration: none; font-weight: bold; }
-    </style>
-</head>
-<body>
-    <div class="box">
-        <a href="/">⬅️ Volver al Monitor</a>
-        <h2>⚙️ Gestión de Usuarios (ADMIN)</h2>
-        <form method="POST" action="/admin/crear">
-            <input type="text" name="username" placeholder="Nuevo Usuario" required>
-            <input type="text" name="password" placeholder="Contraseña" required>
-            <button type="submit" class="btn-crear">Crear Usuario</button>
-        </form>
-        <table>
-            <tr><th>Usuario</th><th>Contraseña</th><th>Rol</th><th>Estado</th><th>Acción</th></tr>
-            {% for u in usuarios %}
-            <tr>
-                <td>{{ u.username }}</td>
-                <td>{{ u.password }}</td>
-                <td><strong style="color:{% if u.role == 'admin' %}#9d4edd{% else %}#aaa{% endif %};">{{ u.role }}</strong></td>
-                <td>{% if u.activo %}<span style="color:#2ecc71;">Activo</span>{% else %}<span style="color:#e74c3c;">Inactivo</span>{% endif %}</td>
-                <td>
-                    {% if u.username != session.get('user') %}
-                    <form method="POST" action="/admin/toggle/{{ u.id }}">
-                        <button type="submit" class="{% if u.activo %}btn-toggle{% else %}btn-active{% endif %}">
-                            {% if u.activo %}Desactivar{% else %}Activar{% endif %}
-                        </button>
-                    </form>
-                    {% else %}
-                    <small style="color:#8e85b8;">Tu Cuenta</small>
-                    {% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </table>
-    </div>
-</body>
-</html>
-"""
-
-# === RUTAS Y API ===
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        usr = request.form.get('username', '').strip()
-        pwd = request.form.get('password', '').strip()
-        user = validar_usuario(usr, pwd)
-        if user:
-            session.permanent = True
-            session['user'] = user['username']
-            session['role'] = user.get('role', 'user')
-            return redirect(url_for('index'))
-        return render_template_string(HTML_LOGIN, error="Usuario/contraseña incorrectos o cuenta inactiva")
-    return render_template_string(HTML_LOGIN)
-
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if request.method == 'POST':
-        usr = request.form.get('username', '').strip()
-        pwd = request.form.get('password', '').strip()
-        try:
-            exist = supabase.table('usuarios').select('*').eq('username', usr).execute()
-            if exist.data and len(exist.data) > 0:
-                return render_template_string(HTML_REGISTER, error="El usuario ya existe")
-            
-            supabase.table('usuarios').insert({'username': usr, 'password': pwd, 'activo': False, 'role': 'user'}).execute()
-            return render_template_string(HTML_LOGIN, msg="✅ Registro solicitado. Espera la activación.")
-        except Exception as e:
-            return render_template_string(HTML_REGISTER, error=f"Error: {e}")
-    return render_template_string(HTML_REGISTER)
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('login'))
-
+# === RUTAS Y API PÚBLICAS ===
 @app.route('/')
 def index():
-    if 'user' not in session:
-        return redirect(url_for('login'))
     return render_template_string(HTML_LAYOUT)
 
-@app.route('/admin')
-def admin():
-    if session.get('role') != 'admin':
-        return redirect(url_for('index'))
-    res = supabase.table('usuarios').select('*').execute()
-    return render_template_string(HTML_ADMIN, usuarios=res.data)
-
-@app.route('/admin/crear', methods=['POST'])
-def admin_crear():
-    if session.get('role') != 'admin': return redirect(url_for('index'))
-    usr = request.form.get('username', '').strip()
-    pwd = request.form.get('password', '').strip()
-    supabase.table('usuarios').insert({'username': usr, 'password': pwd, 'activo': True, 'role': 'user'}).execute()
-    return redirect(url_for('admin'))
-
-@app.route('/admin/toggle/<int:user_id>', methods=['POST'])
-def admin_toggle(user_id):
-    if session.get('role') != 'admin': return redirect(url_for('index'))
-    res = supabase.table('usuarios').select('activo').eq('id', user_id).execute()
-    if res.data:
-        estado_actual = res.data[0]['activo']
-        supabase.table('usuarios').update({'activo': not estado_actual}).eq('id', user_id).execute()
-    return redirect(url_for('admin'))
-
-@app.route('/api/bot-auth', methods=['POST'])
-def bot_auth():
-    data = request.get_json() or {}
-    usr = data.get("username", "").strip()
-    pwd = data.get("password", "").strip()
-    user = validar_usuario(usr, pwd)
-    if user:
-        session.permanent = True
-        session['user'] = user['username']
-        session['role'] = user.get('role', 'user')
-        return jsonify({"status": "ok", "message": "Autorizado"}), 200
-    return jsonify({"status": "error", "message": "Credenciales inválidas o cuenta desactivada"}), 401
+@app.route('/ping')
+def ping():
+    # Endpoint liviano exclusivamente para UptimeRobot
+    return "OK", 200
 
 @app.route('/api/timers', methods=['GET'])
 def get_timers():
-    if 'user' not in session: return jsonify({"error": "No autorizado"}), 401
     timers_map, pcs_map, pj_map, hb_map = obtener_datos_nube()
     return jsonify({"timers": timers_map, "cooldowns": COOLDOWNS, "servers": SERVIDORES, "ultimas_pcs": pcs_map, "ultimos_pjs": pj_map, "heartbeats": hb_map})
 
