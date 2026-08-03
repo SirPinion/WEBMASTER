@@ -7,8 +7,8 @@ from supabase import create_client, Client
 app = Flask(__name__)
 
 # === CONEXIÓN A SUPABASE ===
-SUPABASE_URL = "https://TU_PROYECTO.supabase.co" # 👈 Pega tu URL de Supabase
-SUPABASE_KEY = "TU_ANON_KEY_AQUI"               # 👈 Pega tu API Key de Supabase
+SUPABASE_URL = "https://sfdoobkwnaljgrmbzwvl.supabase.co/rest/v1/" # 👈 Pega tu URL de Supabase
+SUPABASE_KEY = "sb_publishable_Gw39E2iFIXav1paKHFhd0w_q2FgHkgG"               # 👈 Pega tu API Key de Supabase
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
