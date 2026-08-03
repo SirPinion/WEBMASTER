@@ -12,21 +12,38 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# === CONFIGURACIÓN DE COOLDOWNS (en minutos) ===
 COOLDOWNS = {
+    # Bosses Servidores 1, 2 y 3
     "Muggron 1": 180,
     "Muggron 2": 180,
-    "Muggron Barracks 1": 180,
-    "Muggron Barracks 2": 180,
-    "Muggron Crywolf 1": 180,
-    "Muggron Crywolf 2": 180,
-    "Kharzul": 420, 
-    "Vescrya": 420,
-    "Borgar": 120, 
-    "Dreadhorn": 60,
+    "Dreadhorn 1": 60,
+    "Dreadhorn 2": 60,
+    "Moltragon 1": 60,
+    "Moltragon 2": 60,
+    "Borgar": 120,
+    "Kharzul 1": 420,
+    "Kharzul 2": 420,
+    "Kharzul 3": 420,
+    "Vescrya 1": 420,
+    "Vescrya 2": 420,
+    "Vescrya 3": 420,
     "Yellow Goblin": 600,
     "Blue Goblin": 600,
     "Red Goblin": 600,
-    "Red Dragon": 720
+    "Red Dragon": 360,
+    "Santa 1": 360,
+    "Santa 2": 360,
+    "White Wizard 1": 360,
+    "White Wizard 2": 360,
+    "Skeleton King 1": 360,
+    "Skeleton King 2": 360,
+    
+    # Bosses exclusivos de Server 20 (Barracks / Crywolf)
+    "Muggron Barracks 1": 180,
+    "Muggron Barracks 2": 180,
+    "Muggron Crywolf 1": 180,
+    "Muggron Crywolf 2": 180
 }
 
 SERVIDORES = ["Server 1", "Server 2", "Server 3", "Server 20"]
@@ -41,7 +58,7 @@ def parsear_fecha_utc(dt_str):
         if dt_obj.tzinfo is None:
             dt_obj = dt_obj.replace(tzinfo=timezone.utc)
         return dt_obj
-    except Exception as e:
+    except Exception:
         return None
 
 def obtener_datos_nube():
@@ -206,8 +223,6 @@ HTML_LAYOUT = """
                 });
                 if (res.ok) {
                     pedirTimers();
-                } else {
-                    console.error("Error en respuesta:", await res.text());
                 }
             } catch (e) { console.error("Error enviando acción:", e); }
         }
@@ -258,10 +273,13 @@ HTML_LAYOUT = """
 
                 const bossesServidor = timers[svr] || {};
                 for (const [bossName, cdMinutos] of Object.entries(cooldowns)) {
+                    // FILTRADO POR SERVIDOR:
                     if (svr === "Server 20") {
-                        if (["Yellow Goblin", "Blue Goblin", "Red Goblin", "Red Dragon", "Dreadhorn", "Muggron 1", "Muggron 2"].includes(bossName)) continue;
+                        // En Server 20 NO se muestra Borgar, ni Goblins, ni Red Dragon, ni Santa, ni White, ni Skeleton
+                        if (["Borgar", "Yellow Goblin", "Blue Goblin", "Red Goblin", "Red Dragon", "Santa 1", "Santa 2", "White Wizard 1", "White Wizard 2", "Skeleton King 1", "Skeleton King 2", "Dreadhorn 1", "Dreadhorn 2", "Moltragon 1", "Moltragon 2", "Muggron 1", "Muggron 2"].includes(bossName)) continue;
                     } else {
-                        if (["Muggron Barracks 1", "Muggron Barracks 2", "Muggron Crywolf 1", "Muggron Crywolf 2"].includes(bossName)) continue;
+                        // En Server 1, 2 y 3 NO se muestran los bosses exclusivos de Crywolf/Barracks ni las copias extra de Kharzul/Vescrya (solo Kharzul 1 y Vescrya 1)
+                        if (["Muggron Barracks 1", "Muggron Barracks 2", "Muggron Crywolf 1", "Muggron Crywolf 2", "Kharzul 2", "Kharzul 3", "Vescrya 2", "Vescrya 3"].includes(bossName)) continue;
                     }
 
                     let statusState = 'alive';
@@ -293,7 +311,6 @@ HTML_LAYOUT = """
 
                     if (statusState === 'alive') displayTimer = `<div class="timer-badge status-alive">🟢 ¡VIVO!</div>`;
 
-                    // Sanitizamos las comillas para evitar errores de sintaxis en JS
                     const svrSafe = svr.replace(/'/g, "\\'");
                     const bossSafe = bossName.replace(/'/g, "\\'");
 
@@ -323,7 +340,7 @@ HTML_LAYOUT = """
 </html>
 """
 
-# === RUTAS Y API PÚBLICAS ===
+# === RUTAS API ===
 @app.route('/')
 def index():
     return render_template_string(HTML_LAYOUT)
