@@ -6,7 +6,7 @@ from supabase import create_client, Client
 
 app = Flask(__name__)
 
-# === CONEXIÓN A SUPABASE (CREDANCIALES REALES INTEGRADAS) ===
+# === CONEXIÓN A SUPABASE ===
 SUPABASE_URL = "https://sfdoobkwnaljgrmbzwvl.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmZG9vYmt3bmFsamdybWJ6d3ZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU3NDgzMjcsImV4cCI6MjEwMTMyNDMyN30.ZvkJqP9QiDFAi9syxeMnam6gOlVMTMhiD_wEudqt11I"
 
@@ -14,7 +14,8 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Diccionario maestro de cooldowns (en minutos)
 COOLDOWNS = {
-    "Muggron": 180,
+    "Muggron 1": 180,
+    "Muggron 2": 180,
     "Muggron Barracks 1": 180,
     "Muggron Barracks 2": 180,
     "Muggron Crywolf 1": 180,
@@ -299,12 +300,14 @@ HTML_LAYOUT = """
                 const bossesServidor = timers[svr] || {};
 
                 for (const [bossName, cdMinutos] of Object.entries(cooldowns)) {
-                    // --- FILTROS ESPECÍFICOS POR SERVIDOR ---
+                    // --- FILTROS POR SERVIDOR ---
                     if (svr === "Server 20") {
-                        if (["Yellow Goblin", "Blue Goblin", "Red Goblin", "Red Dragon", "Dreadhorn", "Muggron"].includes(bossName)) {
+                        // Server 20: NO lleva Goblins, Red Dragon, Dreadhorn ni Muggron 1 / Muggron 2
+                        if (["Yellow Goblin", "Blue Goblin", "Red Goblin", "Red Dragon", "Dreadhorn", "Muggron 1", "Muggron 2"].includes(bossName)) {
                             continue;
                         }
                     } else {
+                        // Servers 1, 2 y 3: NO llevan los Muggrons específicos del Server 20
                         if (["Muggron Barracks 1", "Muggron Barracks 2", "Muggron Crywolf 1", "Muggron Crywolf 2"].includes(bossName)) {
                             continue;
                         }
