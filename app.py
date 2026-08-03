@@ -1,10 +1,17 @@
 import os
 import json
-from datetime import datetime, timedelta, timezone
-from flask import Flask, render_template_string, jsonify, request, redirect, url_for
+import uuid
+from datetime import datetime, timedelta
+from flask import Flask, render_template_string, jsonify, request, session, redirect, url_for
 from supabase import create_client, Client
 
 app = Flask(__name__)
+
+# === CONFIGURACIÓN DE SESIÓN Y SEGURIDAD ===
+app.secret_key = "mudream_master_secret_key_2026_super_segura_fixed"
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 # === CONEXIÓN A SUPABASE ===
 SUPABASE_URL = "https://sfdoobkwnaljgrmbzwvl.supabase.co"
@@ -12,14 +19,18 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# === COOLDOWNS (en minutos) ===
+# Cooldowns adaptados con los nombres exactos y variantes que usa tu bot OCR
 COOLDOWNS = {
     "Muggron 1": 180,
     "Muggron 2": 180,
+    "Muggron Barracks 1": 180,
+    "Muggron Barracks 2": 180,
+    "Muggron Crywolf 1": 180,
+    "Muggron Crywolf 2": 180,
     "Dreadhorn 1": 60,
     "Dreadhorn 2": 60,
-    "Moltragon 1": 60,
-    "Moltragon 2": 60,
+    "Moltragon 1": 120,
+    "Moltragon 2": 120,
     "Borgar": 120,
     "Kharzul 1": 420,
     "Kharzul 2": 420,
@@ -30,102 +41,173 @@ COOLDOWNS = {
     "Yellow Goblin": 600,
     "Blue Goblin": 600,
     "Red Goblin": 600,
-    "Red Dragon": 360,
-    "Santa 1": 360,
-    "Santa 2": 360,
-    "White Wizard 1": 360,
-    "White Wizard 2": 360,
-    "Skeleton King 1": 360,
-    "Skeleton King 2": 360,
-    "Muggron Barracks 1": 180,
-    "Muggron Barracks 2": 180,
-    "Muggron Crywolf 1": 180,
-    "Muggron Crywolf 2": 180
+    "Red Dragon": 720,
+    "Santa 1": 120,
+    "Santa 2": 120,
+    "White Wizard 1": 120,
+    "White Wizard 2": 120,
+    "Skeleton King 1": 120,
+    "Skeleton King 2": 120
 }
 
 SERVIDORES = ["Server 1", "Server 2", "Server 3", "Server 20"]
 
-def parsear_fecha_utc(dt_str):
-    if not dt_str: return None
+LINK_DESCARGA_DRIVE = "https://drive.google.com/file/d/1w__NqyI529st-24Rj3iRR5crVxMa9NrP/view?usp=sharing"
+
+# === FUNCIONES DE BASE DE DATOS Y AUTENTICACIÓN ===
+def validar_usuario(username, password):
     try:
-        clean_str = str(dt_str).replace('Z', '+00:00')
-        dt_obj = datetime.fromisoformat(clean_str)
-        if dt_obj.tzinfo is None: dt_obj = dt_obj.replace(tzinfo=timezone.utc)
-        return dt_obj
-    except Exception:
-        return None
+        usr_clean = username.strip() if username else ""
+        pwd_clean = password.strip() if password else ""
+        res = supabase.table('usuarios').select('*').eq('username', usr_clean).eq('password', pwd_clean).execute()
+        
+        if res.data and len(res.data) > 0:
+            user = res.data[0]
+            if user.get('activo', False):
+                new_token = str(uuid.uuid4())
+                supabase.table('usuarios').update({'current_token': new_token}).eq('id', user['id']).execute()
+                user['current_token'] = new_token
+                return user
+    except Exception as e:
+        print(f"Error validando usuario: {e}")
+    return None
+
+def validar_token_activo(username, token):
+    try:
+        res = supabase.table('usuarios').select('current_token').eq('username', username).execute()
+        if res.data and len(res.data) > 0:
+            db_token = res.data[0].get('current_token')
+            return db_token == token
+    except Exception as e:
+        print(f"Error verificando token activo: {e}")
+    return False
 
 def obtener_datos_nube():
-    timers_map = {svr: {} for svr in SERVIDORES}
-    pcs_map = {svr: "Sin reportes" for svr in SERVIDORES}
-    pj_map = {svr: "Desconocido" for svr in SERVIDORES}
-    heartbeat_map = {svr: None for svr in SERVIDORES}
-
     try:
         res = supabase.table('timers_bosses').select('*').execute()
-        ahora_utc = datetime.now(timezone.utc)
-
-        if res.data:
-            for row in res.data:
-                svr = row.get('server')
-                if not svr or svr not in SERVIDORES: continue
-
-                boss_timers = {}
-                raw_timers = row.get('timers') or {}
-
-                if isinstance(raw_timers, dict):
-                    for boss, dt_str in raw_timers.items():
-                        dt_obj = parsear_fecha_utc(dt_str)
-                        if dt_obj and dt_obj > ahora_utc:
-                            boss_timers[boss] = int(dt_obj.timestamp())
-
-                timers_map[svr] = boss_timers
-                pcs_map[svr] = row.get('last_pc') or 'Sin reportes'
-                pj_map[svr] = row.get('last_pj') or 'Desconocido'
-                heartbeat_map[svr] = row.get('last_heartbeat')
-
+        timers_map, pcs_map, pj_map, heartbeat_map = {}, {}, {}, {}
+        for row in res.data:
+            svr = row['server']
+            boss_timers = {}
+            raw_timers = row.get('timers') or {}
+            for boss, dt_str in raw_timers.items():
+                dt_obj = datetime.fromisoformat(dt_str)
+                if dt_obj > datetime.now():
+                    boss_timers[boss] = int(dt_obj.timestamp())
+            timers_map[svr] = boss_timers
+            pcs_map[svr] = row.get('last_pc') or 'Sin reportes'
+            pj_map[svr] = row.get('last_pj') or 'Desconocido'
+            heartbeat_map[svr] = row.get('last_heartbeat')
         return timers_map, pcs_map, pj_map, heartbeat_map
     except Exception as e:
-        return timers_map, pcs_map, pj_map, heartbeat_map
+        print(f"Error leyendo Supabase: {e}")
+        return {svr: {} for svr in SERVIDORES}, {svr: "Sin reportes" for svr in SERVIDORES}, {svr: "Desconocido" for svr in SERVIDORES}, {svr: None for svr in SERVIDORES}
 
 def guardar_boss_nube(server, boss, pc_id, pj_name):
     try:
         res = supabase.table('timers_bosses').select('timers').eq('server', server).execute()
-        current_timers = (res.data[0]['timers'] if res.data and res.data[0].get('timers') else {})
+        current_timers = (res.data[0]['timers'] if res.data and res.data[0]['timers'] else {})
         
-        nueva_fecha = datetime.now(timezone.utc) + timedelta(minutes=COOLDOWNS[boss])
+        # Si el boss no existe en el cooldown, se le asigna uno por defecto de 120 min para evitar fallos
+        minutos_cd = COOLDOWNS.get(boss, 120)
+        nueva_fecha = datetime.now() + timedelta(minutes=minutos_cd)
         current_timers[boss] = nueva_fecha.isoformat()
-        ahora_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
-
+        
         supabase.table('timers_bosses').update({
             'timers': current_timers,
             'last_pc': pc_id,
             'last_pj': pj_name,
-            'last_heartbeat': ahora_iso
+            'last_heartbeat': datetime.now().isoformat()
         }).eq('server', server).execute()
     except Exception as e:
-        print(f"Error guardando: {e}")
+        print(f"Error guardando en Supabase: {e}")
 
 def actualizar_heartbeat_nube(server, pc_id, pj_name):
     try:
-        ahora_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
         supabase.table('timers_bosses').update({
             'last_pc': pc_id,
             'last_pj': pj_name,
-            'last_heartbeat': ahora_iso
+            'last_heartbeat': datetime.now().isoformat()
         }).eq('server', server).execute()
     except Exception as e:
-        pass
+        print(f"Error heartbeat: {e}")
 
 def borrar_boss_nube(server, boss):
     try:
         res = supabase.table('timers_bosses').select('timers').eq('server', server).execute()
-        current_timers = (res.data[0]['timers'] if res.data and res.data[0].get('timers') else {})
+        current_timers = (res.data[0]['timers'] if res.data and res.data[0]['timers'] else {})
         if boss in current_timers:
             del current_timers[boss]
             supabase.table('timers_bosses').update({'timers': current_timers}).eq('server', server).execute()
     except Exception as e:
-        pass
+        print(f"Error reseteando en Supabase: {e}")
+
+# === PLANTILLAS HTML ===
+HTML_LOGIN = """
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>🔐 Acceso - Monitor MuDream</title>
+    <style>
+        body { background: #0a0814; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background: #141126; border: 1px solid #2a244d; border-radius: 12px; padding: 30px; width: 340px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        h2 { margin-top: 0; color: #9d4edd; }
+        input { width: 100%; padding: 10px; margin: 10px 0; border-radius: 6px; border: 1px solid #2a244d; background: #0a0814; color: #fff; box-sizing: border-box; }
+        button { width: 100%; padding: 10px; border-radius: 6px; border: none; background: #7b2cbf; color: white; font-weight: bold; cursor: pointer; margin-top: 10px; }
+        button:hover { background: #9d4edd; }
+        .error { color: #ff4757; font-size: 0.85rem; margin-top: 10px; font-weight: bold; }
+        .success { color: #2ecc71; font-size: 0.85rem; margin-top: 10px; }
+        .link-btn { display: inline-block; margin-top: 15px; color: #8e85b8; font-size: 0.85rem; text-decoration: none; }
+        .link-btn:hover { color: #fff; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>⚔️ MUDREAM LOGIN ⚔️</h2>
+        <form method="POST" action="/login">
+            <input type="text" name="username" placeholder="Usuario" required>
+            <input type="password" name="password" placeholder="Contraseña" required>
+            <button type="submit">Ingresar</button>
+        </form>
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+        {% if msg %}<div class="success">{{ msg }}</div>{% endif %}
+        <a href="/register" class="link-btn">¿No tenés cuenta? Registrate acá</a>
+    </div>
+</body>
+</html>
+"""
+
+HTML_REGISTER = """
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>📝 Registro - Monitor MuDream</title>
+    <style>
+        body { background: #0a0814; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background: #141126; border: 1px solid #2a244d; border-radius: 12px; padding: 30px; width: 340px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        h2 { margin-top: 0; color: #9d4edd; }
+        input { width: 100%; padding: 10px; margin: 10px 0; border-radius: 6px; border: 1px solid #2a244d; background: #0a0814; color: #fff; box-sizing: border-box; }
+        button { width: 100%; padding: 10px; border-radius: 6px; border: none; background: #7b2cbf; color: white; font-weight: bold; cursor: pointer; margin-top: 10px; }
+        .error { color: #ff4757; font-size: 0.85rem; margin-top: 10px; }
+        .link-btn { display: inline-block; margin-top: 15px; color: #8e85b8; font-size: 0.85rem; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>📝 CREAR CUENTA</h2>
+        <form method="POST" action="/register">
+            <input type="text" name="username" placeholder="Usuario deseado" required>
+            <input type="password" name="password" placeholder="Contraseña" required>
+            <button type="submit">Solicitar Registro</button>
+        </form>
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+        <a href="/login" class="link-btn">⬅️ Volver al Login</a>
+    </div>
+</body>
+</html>
+"""
 
 HTML_LAYOUT = """
 <!DOCTYPE html>
@@ -137,8 +219,11 @@ HTML_LAYOUT = """
     <style>
         :root { --bg-dark: #0a0814; --card-bg: #141126; --card-border: #2a244d; --accent-purple: #7b2cbf; --accent-glow: #9d4edd; --text-primary: #e6e1ff; --text-secondary: #8e85b8; --alive-green: #2ecc71; --cd-red: #ff4757; --window-yellow: #f1c40f; }
         body { font-family: 'Segoe UI', sans-serif; background-color: var(--bg-dark); color: var(--text-primary); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
-        header { text-align: center; margin-bottom: 20px; width: 100%; max-width: 1200px; }
+        header { text-align: center; margin-bottom: 20px; width: 100%; max-width: 1200px; display: flex; justify-content: space-between; align-items: center; }
         h1 { font-size: 1.8rem; margin: 0; color: #fff; text-shadow: 0 0 10px rgba(123, 44, 191, 0.5); }
+        .top-links { display: flex; gap: 10px; align-items: center; }
+        .top-links a { color: var(--accent-glow); text-decoration: none; font-weight: bold; font-size: 0.9rem; padding: 6px 12px; background: #141126; border-radius: 6px; border: 1px solid var(--card-border); }
+        .btn-download { background: #2ecc71 !important; color: #000 !important; font-weight: bold; border-color: #27ae60 !important; }
         .controls-bar { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-bottom: 25px; background: #100d21; padding: 12px 20px; border-radius: 12px; border: 1px solid var(--card-border); }
         .view-btn { background: #1e1938; border: 1px solid var(--card-border); color: var(--text-primary); padding: 10px 18px; font-size: 0.95rem; font-weight: 600; border-radius: 8px; cursor: pointer; }
         .view-btn.active { background: var(--accent-purple); border-color: var(--accent-glow); color: #fff; }
@@ -161,18 +246,21 @@ HTML_LAYOUT = """
         .status-alive { color: var(--alive-green); border: 1px solid var(--alive-green); }
         .status-cd { color: var(--cd-red); border: 1px solid var(--cd-red); }
         .status-window { color: var(--window-yellow); border: 1px solid var(--window-yellow); }
-        .btn-action { background: var(--accent-purple); border: none; color: white; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.85rem; }
-        .btn-action:hover { background: var(--accent-glow); }
+        .btn-action { background: var(--accent-purple); border: none; color: white; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.85rem; }
         .btn-reset { background: #2a2347; color: #aaa; margin-left: 4px; }
-        .btn-reset:hover { background: #ff4757; color: #fff; }
-        .actions-group { display: flex; align-items: center; gap: 4px; }
-        form { margin: 0; padding: 0; display: inline; }
     </style>
 </head>
 <body>
 
     <header>
         <h1>⚔️ MONITOR MUDREAM ⚔️</h1>
+        <div class="top-links">
+            <a href="{{ link_drive }}" target="_blank" class="btn-download">⬇️ Descargar Bot (.exe)</a>
+            {% if session.get('role') == 'admin' %}
+                <a href="/admin" style="border-color:#9d4edd; background:#7b2cbf; color:#fff;">⚙️ Panel Admin</a>
+            {% endif %}
+            <a href="/logout">🚪 Cerrar Sesión ({{ session.get('user') }})</a>
+        </div>
     </header>
 
     <div class="controls-bar">
@@ -201,9 +289,21 @@ HTML_LAYOUT = """
         async function pedirTimers() {
             try {
                 const res = await fetch('/api/timers');
+                if (res.status === 401) { window.location.href = '/login'; return; }
                 estadoWeb = await res.json();
                 render();
-            } catch (e) {}
+            } catch (e) { console.error(e); }
+        }
+
+        async function enviarAccion(endpoint, server, boss) {
+            try {
+                await fetch(`/api/${endpoint}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ server, boss, pc_id: "Navegador Web", pj_name: "Web" })
+                });
+                pedirTimers();
+            } catch (e) { console.error(e); }
         }
 
         function render() {
@@ -224,16 +324,11 @@ HTML_LAYOUT = """
                 serverBlock.className = 'server-block';
                 const pcOrigen = ultimosReportes[svr] || 'Sin reportes';
                 const pjOrigen = ultimosPjs[svr] || 'Desconocido';
-                
                 let esOnline = false;
                 if (heartbeats[svr]) {
-                    const fechaLimpia = heartbeats[svr].replace(' ', 'T');
-                    const hbUnix = Math.floor(new Date(fechaLimpia).getTime() / 1000);
-                    if (!isNaN(hbUnix) && Math.abs(ahoraUnix - hbUnix) <= 60) { 
-                        esOnline = true; 
-                    }
+                    const hbUnix = Math.floor(new Date(heartbeats[svr]).getTime() / 1000);
+                    if ((ahoraUnix - hbUnix) <= 30) { esOnline = true; }
                 }
-
                 const statusHtml = esOnline 
                     ? `<span><span class="status-dot dot-online"></span><strong style="color:#2ecc71;">ONLINE</strong></span>`
                     : `<span><span class="status-dot dot-offline"></span><strong style="color:#ff4757;">OFFLINE</strong></span>`;
@@ -252,10 +347,9 @@ HTML_LAYOUT = """
 
                 const bossesServidor = timers[svr] || {};
                 for (const [bossName, cdMinutos] of Object.entries(cooldowns)) {
+                    // Filtrar visualización según el servidor si aplica
                     if (svr === "Server 20") {
-                        if (["Borgar", "Yellow Goblin", "Blue Goblin", "Red Goblin", "Red Dragon", "Santa 1", "Santa 2", "White Wizard 1", "White Wizard 2", "Skeleton King 1", "Skeleton King 2", "Dreadhorn 1", "Dreadhorn 2", "Moltragon 1", "Moltragon 2", "Muggron 1", "Muggron 2"].includes(bossName)) continue;
-                    } else {
-                        if (["Muggron Barracks 1", "Muggron Barracks 2", "Muggron Crywolf 1", "Muggron Crywolf 2", "Kharzul 2", "Kharzul 3", "Vescrya 2", "Vescrya 3"].includes(bossName)) continue;
+                        if (["Yellow Goblin", "Blue Goblin", "Red Goblin", "Red Dragon"].includes(bossName)) continue;
                     }
 
                     let statusState = 'alive';
@@ -287,7 +381,6 @@ HTML_LAYOUT = """
 
                     if (statusState === 'alive') displayTimer = `<div class="timer-badge status-alive">🟢 ¡VIVO!</div>`;
 
-                    // FORMULARIOS NATIVOS: A PRUEBA DE FALLOS Y DE JAVASCRIPT
                     htmlContent += `
                         <div class="boss-row">
                             <div>
@@ -295,18 +388,9 @@ HTML_LAYOUT = """
                                 <div class="boss-respawn">${cdMinutos} min</div>
                             </div>
                             ${displayTimer}
-                            <div class="actions-group">
-                                <form action="/api/kill" method="POST">
-                                    <input type="hidden" name="server" value="${svr}">
-                                    <input type="hidden" name="boss" value="${bossName}">
-                                    <button type="submit" class="btn-action">⚔️ Kill</button>
-                                </form>
-                                ${statusState !== 'alive' ? `
-                                <form action="/api/reset" method="POST">
-                                    <input type="hidden" name="server" value="${svr}">
-                                    <input type="hidden" name="boss" value="${bossName}">
-                                    <button type="submit" class="btn-action btn-reset">✖</button>
-                                </form>` : ''}
+                            <div>
+                                <button class="btn-action" onclick="enviarAccion('kill', '${svr}', '${bossName}')">⚔️ Kill</button>
+                                ${statusState !== 'alive' ? `<button class="btn-action btn-reset" onclick="enviarAccion('reset', '${svr}', '${bossName}')">✖</button>` : ''}
                             </div>
                         </div>
                     `;
@@ -323,31 +407,141 @@ HTML_LAYOUT = """
 </html>
 """
 
+HTML_ADMIN = """
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>⚙️ Panel Admin - Usuarios</title>
+    <style>
+        body { background: #0a0814; color: #fff; font-family: sans-serif; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .box { background: #141126; border: 1px solid #2a244d; border-radius: 12px; padding: 25px; width: 100%; max-width: 650px; }
+        h2 { margin-top: 0; color: #9d4edd; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th, td { padding: 10px; border-bottom: 1px solid #2a244d; text-align: left; }
+        input, select { padding: 8px; background: #0a0814; border: 1px solid #2a244d; color: white; border-radius: 6px; }
+        button { padding: 8px 14px; border: none; color: white; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        .btn-toggle { background: #e74c3c; }
+        .btn-active { background: #2ecc71; }
+        .btn-crear { background: #7b2cbf; }
+        a { color: #9d4edd; text-decoration: none; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <a href="/">⬅️ Volver al Monitor</a>
+        <h2>⚙️ Gestión de Usuarios (ADMIN)</h2>
+        <form method="POST" action="/admin/crear">
+            <input type="text" name="username" placeholder="Nuevo Usuario" required>
+            <input type="text" name="password" placeholder="Contraseña" required>
+            <button type="submit" class="btn-crear">Crear Usuario</button>
+        </form>
+        <table>
+            <tr><th>Usuario</th><th>Contraseña</th><th>Rol</th><th>Estado</th><th>Acción</th></tr>
+            {% for u in usuarios %}
+            <tr>
+                <td>{{ u.username }}</td>
+                <td>{{ u.password }}</td>
+                <td><strong style="color:{% if u.role == 'admin' %}#9d4edd{% else %}#aaa{% endif %};">{{ u.role }}</strong></td>
+                <td>{% if u.activo %}<span style="color:#2ecc71;">Activo</span>{% else %}<span style="color:#e74c3c;">Inactivo</span>{% endif %}</td>
+                <td>
+                    {% if u.username != session.get('user') %}
+                    <form method="POST" action="/admin/toggle/{{ u.id }}">
+                        <button type="submit" class="{% if u.activo %}btn-toggle{% else %}btn-active{% endif %}">
+                            {% if u.activo %}Desactivar{% else %}Activar{% endif %}
+                        </button>
+                    </form>
+                    {% else %}
+                    <small style="color:#8e85b8;">Tu Cuenta</small>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+</body>
+</html>
+"""
+
+# === RUTAS ===
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        usr = request.form.get('username', '').strip()
+        pwd = request.form.get('password', '').strip()
+        user = validar_usuario(usr, pwd)
+        if user:
+            session.permanent = True
+            session['user'] = user['username']
+            session['role'] = user.get('role', 'user')
+            session['token'] = user.get('current_token')
+            return redirect(url_for('index'))
+        return render_template_string(HTML_LOGIN, error="Usuario/contraseña incorrectos o cuenta inactiva.")
+    return render_template_string(HTML_LOGIN)
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        usr = request.form.get('username', '').strip()
+        pwd = request.form.get('password', '').strip()
+        try:
+            exist = supabase.table('usuarios').select('*').eq('username', usr).execute()
+            if exist.data and len(exist.data) > 0:
+                return render_template_string(HTML_REGISTER, error="El nombre de usuario ya está ocupado")
+            
+            supabase.table('usuarios').insert({'username': usr, 'password': pwd, 'activo': False, 'role': 'user'}).execute()
+            return render_template_string(HTML_LOGIN, msg="✅ Registro solicitado. El administrador debe activar tu cuenta.")
+        except Exception as e:
+            return render_template_string(HTML_REGISTER, error=f"Error al registrar: {e}")
+    return render_template_string(HTML_REGISTER)
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
 @app.route('/')
 def index():
-    return render_template_string(HTML_LAYOUT)
+    if 'user' not in session or not validar_token_activo(session['user'], session.get('token')):
+        session.clear()
+        return redirect(url_for('login'))
+    return render_template_string(HTML_LAYOUT, link_drive=LINK_DESCARGA_DRIVE)
 
-@app.route('/ping')
-def ping():
-    return "OK", 200
+@app.route('/admin')
+def admin():
+    if session.get('role') != 'admin' or not validar_token_activo(session['user'], session.get('token')):
+        return redirect(url_for('index'))
+    res = supabase.table('usuarios').select('*').execute()
+    return render_template_string(HTML_ADMIN, usuarios=res.data)
+
+@app.route('/admin/crear', methods=['POST'])
+def admin_crear():
+    if session.get('role') != 'admin': return redirect(url_for('index'))
+    usr = request.form.get('username', '').strip()
+    pwd = request.form.get('password', '').strip()
+    supabase.table('usuarios').insert({'username': usr, 'password': pwd, 'activo': True, 'role': 'user'}).execute()
+    return redirect(url_for('admin'))
+
+@app.route('/admin/toggle/<int:user_id>', methods=['POST'])
+def admin_toggle(user_id):
+    if session.get('role') != 'admin': return redirect(url_for('index'))
+    res = supabase.table('usuarios').select('activo').eq('id', user_id).execute()
+    if res.data:
+        estado_actual = res.data[0]['activo']
+        supabase.table('usuarios').update({'activo': not estado_actual}).eq('id', user_id).execute()
+    return redirect(url_for('admin'))
 
 @app.route('/api/timers', methods=['GET'])
 def get_timers():
+    if 'user' not in session or not validar_token_activo(session['user'], session.get('token')): 
+        return jsonify({"error": "No autorizado"}), 401
     timers_map, pcs_map, pj_map, hb_map = obtener_datos_nube()
     return jsonify({"timers": timers_map, "cooldowns": COOLDOWNS, "servers": SERVIDORES, "ultimas_pcs": pcs_map, "ultimos_pjs": pj_map, "heartbeats": hb_map})
 
-def obtener_payload():
-    d = request.get_json(silent=True)
-    if not d:
-        d = request.form.to_dict()
-    return d or {}
-
 @app.route('/api/heartbeat', methods=['POST'])
 def heartbeat():
-    data = obtener_payload()
-    svr = data.get("server")
-    pc_id = data.get("pc_id", "Desconocida")
-    pj_name = data.get("pj_name", "Desconocido")
+    data = request.get_json() or {}
+    svr, pc_id, pj_name = data.get("server"), data.get("pc_id", "Desconocida"), data.get("pj_name", "Desconocido")
     if svr in SERVIDORES:
         actualizar_heartbeat_nube(svr, pc_id, pj_name)
         return jsonify({"status": "ok"}), 200
@@ -355,29 +549,19 @@ def heartbeat():
 
 @app.route('/api/kill', methods=['POST'])
 def kill_boss():
-    data = obtener_payload()
-    svr = data.get("server")
-    boss = data.get("boss")
-    pc_id = data.get("pc_id", "Navegador Web")
-    pj_name = data.get("pj_name", "Web")
-    
+    data = request.get_json() or {}
+    svr, boss, pc_id, pj_name = data.get("server"), data.get("boss"), data.get("pc_id", "Desconocida"), data.get("pj_name", "Desconocido")
     if svr in SERVIDORES and boss in COOLDOWNS:
         guardar_boss_nube(svr, boss, pc_id, pj_name)
-        # Si la petición vino del navegador web, redirigir a la página principal
-        if request.form:
-            return redirect(url_for('index'))
         return jsonify({"status": "ok"}), 200
     return jsonify({"status": "error"}), 400
 
 @app.route('/api/reset', methods=['POST'])
 def reset_boss():
-    data = obtener_payload()
-    svr = data.get("server")
-    boss = data.get("boss")
+    data = request.get_json() or {}
+    svr, boss = data.get("server"), data.get("boss")
     if svr in SERVIDORES:
         borrar_boss_nube(svr, boss)
-        if request.form:
-            return redirect(url_for('index'))
         return jsonify({"status": "ok"}), 200
     return jsonify({"status": "error"}), 400
 
