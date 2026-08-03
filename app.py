@@ -223,6 +223,8 @@ HTML_LAYOUT = """
                 });
                 if (res.ok) {
                     pedirTimers();
+                } else {
+                    console.error("Error en respuesta:", await res.text());
                 }
             } catch (e) { console.error("Error enviando acción:", e); }
         }
@@ -275,10 +277,8 @@ HTML_LAYOUT = """
                 for (const [bossName, cdMinutos] of Object.entries(cooldowns)) {
                     // FILTRADO POR SERVIDOR:
                     if (svr === "Server 20") {
-                        // En Server 20 NO se muestra Borgar, ni Goblins, ni Red Dragon, ni Santa, ni White, ni Skeleton
                         if (["Borgar", "Yellow Goblin", "Blue Goblin", "Red Goblin", "Red Dragon", "Santa 1", "Santa 2", "White Wizard 1", "White Wizard 2", "Skeleton King 1", "Skeleton King 2", "Dreadhorn 1", "Dreadhorn 2", "Moltragon 1", "Moltragon 2", "Muggron 1", "Muggron 2"].includes(bossName)) continue;
                     } else {
-                        // En Server 1, 2 y 3 NO se muestran los bosses exclusivos de Crywolf/Barracks ni las copias extra de Kharzul/Vescrya (solo Kharzul 1 y Vescrya 1)
                         if (["Muggron Barracks 1", "Muggron Barracks 2", "Muggron Crywolf 1", "Muggron Crywolf 2", "Kharzul 2", "Kharzul 3", "Vescrya 2", "Vescrya 3"].includes(bossName)) continue;
                     }
 
@@ -311,9 +311,6 @@ HTML_LAYOUT = """
 
                     if (statusState === 'alive') displayTimer = `<div class="timer-badge status-alive">🟢 ¡VIVO!</div>`;
 
-                    const svrSafe = svr.replace(/'/g, "\\'");
-                    const bossSafe = bossName.replace(/'/g, "\\'");
-
                     htmlContent += `
                         <div class="boss-row">
                             <div>
@@ -322,8 +319,8 @@ HTML_LAYOUT = """
                             </div>
                             ${displayTimer}
                             <div>
-                                <button class="btn-action" onclick="enviarAccion('kill', '${svrSafe}', '${bossSafe}')">⚔️ Kill</button>
-                                ${statusState !== 'alive' ? `<button class="btn-action btn-reset" onclick="enviarAccion('reset', '${svrSafe}', '${bossSafe}')">✖</button>` : ''}
+                                <button class="btn-action" onclick="enviarAccion('kill', '${svr}', '${bossName}')">⚔️ Kill</button>
+                                ${statusState !== 'alive' ? `<button class="btn-action btn-reset" onclick="enviarAccion('reset', '${svr}', '${bossName}')">✖</button>` : ''}
                             </div>
                         </div>
                     `;
@@ -356,8 +353,11 @@ def get_timers():
 
 @app.route('/api/heartbeat', methods=['POST'])
 def heartbeat():
-    data = request.get_json() or {}
-    svr, pc_id, pj_name = data.get("server"), data.get("pc_id", "Desconocida"), data.get("pj_name", "Desconocido")
+    data = request.get_json(silent=True) or request.form or {}
+    svr = data.get("server")
+    pc_id = data.get("pc_id", "Desconocida")
+    pj_name = data.get("pj_name", "Desconocido")
+    
     if svr in SERVIDORES:
         actualizar_heartbeat_nube(svr, pc_id, pj_name)
         return jsonify({"status": "ok"}), 200
@@ -365,17 +365,24 @@ def heartbeat():
 
 @app.route('/api/kill', methods=['POST'])
 def kill_boss():
-    data = request.get_json() or {}
-    svr, boss, pc_id, pj_name = data.get("server"), data.get("boss"), data.get("pc_id", "Desconocida"), data.get("pj_name", "Desconocido")
+    # Acepta JSON (Bot) o FormData (Browser Clic)
+    data = request.get_json(silent=True) or request.form or {}
+    svr = data.get("server")
+    boss = data.get("boss")
+    pc_id = data.get("pc_id", "Navegador Web")
+    pj_name = data.get("pj_name", "Web")
+    
     if svr in SERVIDORES and boss in COOLDOWNS:
         guardar_boss_nube(svr, boss, pc_id, pj_name)
         return jsonify({"status": "ok"}), 200
-    return jsonify({"status": "error", "message": "Servidor o Boss inválido"}), 400
+    return jsonify({"status": "error", "message": f"Invalido: svr={svr}, boss={boss}"}), 400
 
 @app.route('/api/reset', methods=['POST'])
 def reset_boss():
-    data = request.get_json() or {}
-    svr, boss = data.get("server"), data.get("boss")
+    data = request.get_json(silent=True) or request.form or {}
+    svr = data.get("server")
+    boss = data.get("boss")
+    
     if svr in SERVIDORES:
         borrar_boss_nube(svr, boss)
         return jsonify({"status": "ok"}), 200
