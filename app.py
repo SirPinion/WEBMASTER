@@ -8,7 +8,7 @@ app = Flask(__name__)
 
 # === CONEXIÓN A SUPABASE ===
 SUPABASE_URL = "https://sfdoobkwnaljgrmbzwvl.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmZG9vYmt3bmFsamdybWJ6d3ZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU3NDgzMjcsImV4cCI6MjEwMTMyNDMyN30.ZvkJqP9QiDFAi9syxeMnam6gOlVMTMhiD_wEudqt11I"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmZG9vYmt3namdybWJ6d3ZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU3NDgzMjcsImV4cCI6MjEwMTMyNDMyN30.ZvkJqP9QiDFAi9syxeMnam6gOlVMTMhiD_wEudqt11I"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -214,13 +214,21 @@ HTML_LAYOUT = """
             } catch (e) { console.error("Error pidiendo timers:", e); }
         }
 
+        // ENVIAR ACCIÓN RECRITO DE FORMA INDESTRUCTIBLE
         async function enviarAccion(endpoint, server, boss) {
             try {
+                const params = new URLSearchParams();
+                params.append('server', server);
+                params.append('boss', boss);
+                params.append('pc_id', 'Navegador Web');
+                params.append('pj_name', 'Web');
+
                 const res = await fetch('/api/' + endpoint, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ server: server, boss: boss, pc_id: "Navegador Web", pj_name: "Web" })
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: params
                 });
+
                 if (res.ok) {
                     pedirTimers();
                 } else {
@@ -275,7 +283,6 @@ HTML_LAYOUT = """
 
                 const bossesServidor = timers[svr] || {};
                 for (const [bossName, cdMinutos] of Object.entries(cooldowns)) {
-                    // FILTRADO POR SERVIDOR:
                     if (svr === "Server 20") {
                         if (["Borgar", "Yellow Goblin", "Blue Goblin", "Red Goblin", "Red Dragon", "Santa 1", "Santa 2", "White Wizard 1", "White Wizard 2", "Skeleton King 1", "Skeleton King 2", "Dreadhorn 1", "Dreadhorn 2", "Moltragon 1", "Moltragon 2", "Muggron 1", "Muggron 2"].includes(bossName)) continue;
                     } else {
@@ -337,7 +344,7 @@ HTML_LAYOUT = """
 </html>
 """
 
-# === RUTAS API ===
+# === RUTAS API ADAPTABLES (RECIBEN JSON O FORM) ===
 @app.route('/')
 def index():
     return render_template_string(HTML_LAYOUT)
@@ -351,9 +358,16 @@ def get_timers():
     timers_map, pcs_map, pj_map, hb_map = obtener_datos_nube()
     return jsonify({"timers": timers_map, "cooldowns": COOLDOWNS, "servers": SERVIDORES, "ultimas_pcs": pcs_map, "ultimos_pjs": pj_map, "heartbeats": hb_map})
 
+def extraer_parametros(req):
+    """ Extrae datos de la petición ya sea venida como JSON o como URL-Encoded """
+    data = req.get_json(silent=True)
+    if not data:
+        data = req.form
+    return data or {}
+
 @app.route('/api/heartbeat', methods=['POST'])
 def heartbeat():
-    data = request.get_json(silent=True) or request.form or {}
+    data = extraer_parametros(request)
     svr = data.get("server")
     pc_id = data.get("pc_id", "Desconocida")
     pj_name = data.get("pj_name", "Desconocido")
@@ -365,8 +379,7 @@ def heartbeat():
 
 @app.route('/api/kill', methods=['POST'])
 def kill_boss():
-    # Acepta JSON (Bot) o FormData (Browser Clic)
-    data = request.get_json(silent=True) or request.form or {}
+    data = extraer_parametros(request)
     svr = data.get("server")
     boss = data.get("boss")
     pc_id = data.get("pc_id", "Navegador Web")
@@ -375,11 +388,11 @@ def kill_boss():
     if svr in SERVIDORES and boss in COOLDOWNS:
         guardar_boss_nube(svr, boss, pc_id, pj_name)
         return jsonify({"status": "ok"}), 200
-    return jsonify({"status": "error", "message": f"Invalido: svr={svr}, boss={boss}"}), 400
+    return jsonify({"status": "error", "message": "Datos invalidos"}), 400
 
 @app.route('/api/reset', methods=['POST'])
 def reset_boss():
-    data = request.get_json(silent=True) or request.form or {}
+    data = extraer_parametros(request)
     svr = data.get("server")
     boss = data.get("boss")
     
