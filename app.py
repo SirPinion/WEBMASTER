@@ -108,7 +108,6 @@ def guardar_boss_nube(server, boss, pc_id, pj_name):
         res = supabase.table('timers_bosses').select('timers').eq('server', server).execute()
         current_timers = (res.data[0]['timers'] if res.data and res.data[0]['timers'] else {})
         
-        # Si el boss no existe en el cooldown, se le asigna uno por defecto de 120 min para evitar fallos
         minutos_cd = COOLDOWNS.get(boss, 120)
         nueva_fecha = datetime.now() + timedelta(minutes=minutos_cd)
         current_timers[boss] = nueva_fecha.isoformat()
@@ -347,11 +346,6 @@ HTML_LAYOUT = """
 
                 const bossesServidor = timers[svr] || {};
                 for (const [bossName, cdMinutos] of Object.entries(cooldowns)) {
-                    // Filtrar visualización según el servidor si aplica
-                    if (svr === "Server 20") {
-                        if (["Yellow Goblin", "Blue Goblin", "Red Goblin", "Red Dragon"].includes(bossName)) continue;
-                    }
-
                     let statusState = 'alive';
                     let displayTimer = '';
 
@@ -550,11 +544,15 @@ def heartbeat():
 @app.route('/api/kill', methods=['POST'])
 def kill_boss():
     data = request.get_json() or {}
-    svr, boss, pc_id, pj_name = data.get("server"), data.get("boss"), data.get("pc_id", "Desconocida"), data.get("pj_name", "Desconocido")
+    svr = data.get("server")
+    boss = data.get("boss")
+    pc_id = data.get("pc_id", "Desconocida")
+    pj_name = data.get("pj_name", "Desconocido")
+    
     if svr in SERVIDORES and boss in COOLDOWNS:
         guardar_boss_nube(svr, boss, pc_id, pj_name)
         return jsonify({"status": "ok"}), 200
-    return jsonify({"status": "error"}), 400
+    return jsonify({"status": "error", "message": "Servidor o Boss inválido"}), 400
 
 @app.route('/api/reset', methods=['POST'])
 def reset_boss():
