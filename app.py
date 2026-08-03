@@ -6,9 +6,9 @@ from supabase import create_client, Client
 
 app = Flask(__name__)
 
-# === CONEXIÓN A SUPABASE ===
-SUPABASE_URL = "https://sfdoobkwnaljgrmbzwvl.supabase.co" # 👈 Pega tu URL de Supabase
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmZG9vYmt3bmFsamdybWJ6d3ZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU3NDgzMjcsImV4cCI6MjEwMTMyNDMyN30.ZvkJqP9QiDFAi9syxeMnam6gOlVMTMhiD_wEudqt11I"               # 👈 Pega tu API Key de Supabase
+# === CONEXIÓN A SUPABASE (URL corregida sin /rest/v1/) ===
+SUPABASE_URL = "https://sfdoobkwnaljgrmbzwvl.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmZG9vYmt3bmFsamdybWJ6d3ZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU3NDgzMjcsImV4cCI6MjEwMTMyNDMyN30.ZvkJqP9QiDFAi9syxeMnam6gOlVMTMhiD_wEudqt11I"  # 👈 Pega tu API Key de Supabase acá
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -35,25 +35,25 @@ def obtener_datos_nube():
         for row in res.data:
             svr = row['server']
             boss_timers = {}
-            for boss, dt_str in row.get('timers', {}).items():
+            raw_timers = row.get('timers') or {}
+            for boss, dt_str in raw_timers.items():
                 dt_obj = datetime.fromisoformat(dt_str)
                 if dt_obj > datetime.now():
                     boss_timers[boss] = int(dt_obj.timestamp())
             
             timers_map[svr] = boss_timers
-            pcs_map[svr] = row.get('last_pc', 'Sin reportes')
-            pj_map[svr] = row.get('last_pj', 'Desconocido')
-            heartbeat_map[svr] = row.get('last_heartbeat', None)
+            pcs_map[svr] = row.get('last_pc') or 'Sin reportes'
+            pj_map[svr] = row.get('last_pj') or 'Desconocido'
+            heartbeat_map[svr] = row.get('last_heartbeat')
             
         return timers_map, pcs_map, pj_map, heartbeat_map
     except Exception as e:
-        print(f"Error leyendo Supabase: {e}")
+        print(f"❌ Error leyendo Supabase: {e}")
         return {svr: {} for svr in SERVIDORES}, {svr: "Sin reportes" for svr in SERVIDORES}, {svr: "Desconocido" for svr in SERVIDORES}, {svr: None for svr in SERVIDORES}
 
 def guardar_boss_nube(server, boss, pc_id, pj_name):
     try:
         res = supabase.table('timers_bosses').select('timers').eq('server', server).execute()
-        # Protección contra valores nulos en la base de datos
         current_timers = (res.data[0]['timers'] if res.data and res.data[0]['timers'] else {})
         
         nueva_fecha = datetime.now() + timedelta(minutes=COOLDOWNS[boss])
@@ -69,8 +69,6 @@ def guardar_boss_nube(server, boss, pc_id, pj_name):
     except Exception as e:
         print(f"❌ Error guardando en Supabase: {e}")
 
-
-
 def actualizar_heartbeat_nube(server, pc_id, pj_name):
     try:
         supabase.table('timers_bosses').update({
@@ -79,7 +77,7 @@ def actualizar_heartbeat_nube(server, pc_id, pj_name):
             'last_heartbeat': datetime.now().isoformat()
         }).eq('server', server).execute()
     except Exception as e:
-        print(f"Error heartbeat: {e}")
+        print(f"❌ Error heartbeat: {e}")
 
 def borrar_boss_nube(server, boss):
     try:
@@ -270,7 +268,6 @@ HTML_LAYOUT = """
                 const pcOrigen = ultimosReportes[svr] || 'Sin reportes';
                 const pjOrigen = ultimosPjs[svr] || 'Desconocido';
                 
-                // Si el bot envió señal en los últimos 30 segundos se considera ONLINE
                 let esOnline = false;
                 if (heartbeats[svr]) {
                     const hbUnix = Math.floor(new Date(heartbeats[svr]).getTime() / 1000);
@@ -398,7 +395,7 @@ def get_timers():
 
 @app.route('/api/heartbeat', methods=['POST'])
 def heartbeat():
-    data = request.get_json()
+    data = request.get_json() or {}
     svr = data.get("server")
     pc_id = data.get("pc_id", "Desconocida")
     pj_name = data.get("pj_name", "Desconocido")
@@ -410,7 +407,7 @@ def heartbeat():
 
 @app.route('/api/kill', methods=['POST'])
 def kill_boss():
-    data = request.get_json()
+    data = request.get_json() or {}
     svr = data.get("server")
     boss = data.get("boss")
     pc_id = data.get("pc_id", "Desconocida")
@@ -423,7 +420,7 @@ def kill_boss():
 
 @app.route('/api/reset', methods=['POST'])
 def reset_boss():
-    data = request.get_json()
+    data = request.get_json() or {}
     svr = data.get("server")
     boss = data.get("boss")
 
