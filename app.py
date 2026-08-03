@@ -2,10 +2,16 @@ import os
 import json
 from datetime import datetime, timedelta
 from flask import Flask, render_template_string, jsonify, request
+from supabase import create_client, Client
 
 app = Flask(__name__)
 
-# Configuración de Bosses y Cooldowns base (en minutos)
+# === CONEXIÓN A SUPABASE (NUBE) ===
+SUPABASE_URL = "https://sfdoobkwnaljgrmbzwvl.supabase.co/rest/v1/" # 👈 Pega tu URL de Supabase acá
+SUPABASE_KEY = "sb_publishable_Gw39E2iFIXav1paKHFhd0w_q2FgHkgG"               # 👈 Pega tu API Key de Supabase acá
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 COOLDOWNS = {
     "Muggron (Barracks)": 180,
     "Muggron (Crywolf)": 180,
@@ -13,45 +19,62 @@ COOLDOWNS = {
     "Vescrya": 420,
     "Borgar": 120, 
     "Dreadhorn": 60,
-    "Yellow Goblin": 600,  # 10 Horas
-    "Blue Goblin": 600,    # 10 Horas
-    "Red Goblin": 600,     # 10 Horas
-    "Red Dragon": 720      # 12 Horas
+    "Yellow Goblin": 600,
+    "Blue Goblin": 600,
+    "Red Goblin": 600,
+    "Red Dragon": 720
 }
 
 SERVIDORES = ["Server 1", "Server 2", "Server 3", "Server 20"]
-RUTA_RESPALDO = "backup_timers.json"
 
-timers_servidores = {svr: {} for svr in SERVIDORES}
-ultimas_pcs_reportadas = {svr: "Sin reportes" for svr in SERVIDORES}
-
-if os.path.exists(RUTA_RESPALDO):
+def obtener_datos_nube():
     try:
-        with open(RUTA_RESPALDO, "r") as f:
-            datos = json.load(f)
-            for svr, bosses in datos.get("timers", {}).items():
-                if svr in timers_servidores:
-                    for boss, dt_str in bosses.items():
-                        dt_obj = datetime.fromisoformat(dt_str)
-                        if dt_obj > datetime.now():
-                            timers_servidores[svr][boss] = dt_obj
-            ultimas_pcs_reportadas.update(datos.get("pcs", {}))
+        res = supabase.table('timers_bosses').select('*').execute()
+        timers_map = {}
+        pcs_map = {}
+        for row in res.data:
+            svr = row['server']
+            # Convertimos strings ISO a timestamp UNIX
+            boss_timers = {}
+            for boss, dt_str in row['timers'].items():
+                dt_obj = datetime.fromisoformat(dt_str)
+                if dt_obj > datetime.now():
+                    boss_timers[boss] = int(dt_obj.timestamp())
+            timers_map[svr] = boss_timers
+            pcs_map[svr] = row['last_pc']
+        return timers_map, pcs_map
     except Exception as e:
-        print(f"Error cargando respaldo: {e}")
+        print(f"Error leyendo Supabase: {e}")
+        return {svr: {} for svr in SERVIDORES}, {svr: "Sin reportes" for svr in SERVIDORES}
 
-def guardar_disco():
+def guardar_boss_nube(server, boss, pc_id):
     try:
-        datos = {
-            "timers": {
-                svr: {boss: dt.isoformat() for boss, dt in bosses.items()}
-                for svr, bosses in timers_servidores.items()
-            },
-            "pcs": ultimas_pcs_reportadas
-        }
-        with open(RUTA_RESPALDO, "w") as f:
-            json.dump(datos, f, indent=4)
+        # 1. Leemos el mapa de timers actual del servidor
+        res = supabase.table('timers_bosses').select('timers').eq('server', server).execute()
+        current_timers = res.data[0]['timers'] if res.data else {}
+        
+        # 2. Actualizamos el nuevo cooldown
+        nueva_fecha = datetime.now() + timedelta(minutes=COOLDOWNS[boss])
+        current_timers[boss] = nueva_fecha.isoformat()
+
+        # 3. Guardamos en la base de datos remota
+        supabase.table('timers_bosses').update({
+            'timers': current_timers,
+            'last_pc': pc_id
+        }).eq('server', server).execute()
     except Exception as e:
-        print(f"Error guardando respaldo: {e}")
+        print(f"Error guardando en Supabase: {e}")
+
+def borrar_boss_nube(server, boss):
+    try:
+        res = supabase.table('timers_bosses').select('timers').eq('server', server).execute()
+        current_timers = res.data[0]['timers'] if res.data else {}
+        
+        if boss in current_timers:
+            del current_timers[boss]
+            supabase.table('timers_bosses').update({'timers': current_timers}).eq('server', server).execute()
+    except Exception as e:
+        print(f"Error reseteando en Supabase: {e}")
 
 HTML_LAYOUT = """
 <!DOCTYPE html>
@@ -78,70 +101,44 @@ HTML_LAYOUT = """
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background-color: var(--bg-dark);
             color: var(--text-primary);
-            margin: 0;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
+            margin: 0; padding: 20px;
+            display: flex; flex-direction: column; align-items: center;
         }
 
         header { text-align: center; margin-bottom: 20px; }
         h1 { font-size: 2rem; margin: 0 0 10px 0; color: #fff; text-shadow: 0 0 10px rgba(123, 44, 191, 0.5); }
 
         .controls-bar {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            justify-content: center;
-            margin-bottom: 25px;
-            background: #100d21;
-            padding: 12px 20px;
-            border-radius: 12px;
-            border: 1px solid var(--card-border);
+            display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
+            margin-bottom: 25px; background: #100d21; padding: 12px 20px;
+            border-radius: 12px; border: 1px solid var(--card-border);
         }
 
         .view-btn {
-            background: #1e1938;
-            border: 1px solid var(--card-border);
-            color: var(--text-primary);
-            padding: 10px 18px;
-            font-size: 0.95rem;
-            font-weight: 600;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.2s ease;
+            background: #1e1938; border: 1px solid var(--card-border);
+            color: var(--text-primary); padding: 10px 18px; font-size: 0.95rem;
+            font-weight: 600; border-radius: 8px; cursor: pointer; transition: all 0.2s ease;
         }
 
         .view-btn.active {
-            background: var(--accent-purple);
-            border-color: var(--accent-glow);
-            box-shadow: 0 0 12px rgba(157, 78, 221, 0.5);
-            color: #fff;
+            background: var(--accent-purple); border-color: var(--accent-glow);
+            box-shadow: 0 0 12px rgba(157, 78, 221, 0.5); color: #fff;
         }
 
         .dashboard-container { width: 100%; max-width: 1200px; }
 
         .grid-all {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-            gap: 20px;
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px;
         }
 
         .server-block {
-            background: var(--card-bg);
-            border: 1px solid var(--card-border);
-            border-radius: 12px;
-            padding: 18px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+            background: var(--card-bg); border: 1px solid var(--card-border);
+            border-radius: 12px; padding: 18px; box-shadow: 0 4px 15px rgba(0,0,0,0.4);
         }
 
         .server-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 2px solid var(--card-border);
-            padding-bottom: 10px;
-            margin-bottom: 12px;
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 2px solid var(--card-border); padding-bottom: 10px; margin-bottom: 12px;
         }
 
         .server-title { font-size: 1.4rem; font-weight: bold; color: #fff; }
@@ -150,26 +147,16 @@ HTML_LAYOUT = """
         .boss-list { display: flex; flex-direction: column; gap: 10px; }
 
         .boss-row {
-            background: #0d0a1a;
-            border: 1px solid #1f1a3a;
-            border-radius: 8px;
-            padding: 10px 12px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            background: #0d0a1a; border: 1px solid #1f1a3a; border-radius: 8px;
+            padding: 10px 12px; display: flex; justify-content: space-between; align-items: center;
         }
 
         .boss-name { font-weight: bold; font-size: 0.95rem; }
         .boss-respawn { font-size: 0.75rem; color: var(--text-secondary); }
 
         .timer-badge {
-            font-family: monospace;
-            font-size: 1rem;
-            font-weight: bold;
-            padding: 4px 8px;
-            border-radius: 6px;
-            text-align: center;
-            min-width: 110px;
+            font-family: monospace; font-size: 1rem; font-weight: bold;
+            padding: 4px 8px; border-radius: 6px; text-align: center; min-width: 110px;
         }
 
         .status-alive { color: var(--alive-green); border: 1px solid var(--alive-green); }
@@ -177,14 +164,8 @@ HTML_LAYOUT = """
         .status-window { color: var(--window-yellow); border: 1px solid var(--window-yellow); }
 
         .btn-action {
-            background: var(--accent-purple);
-            border: none;
-            color: white;
-            padding: 6px 10px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: bold;
-            font-size: 0.85rem;
+            background: var(--accent-purple); border: none; color: white;
+            padding: 6px 10px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.85rem;
         }
 
         .btn-reset { background: #2a2347; color: #aaa; margin-left: 4px; }
@@ -269,22 +250,20 @@ HTML_LAYOUT = """
                 const bossesServidor = timers[svr] || {};
 
                 for (const [bossName, cdMinutos] of Object.entries(cooldowns)) {
-                    // Si el servidor es Server 20, ocultamos los Goblins y Red Dragon
                     if (svr === "Server 20" && ["Yellow Goblin", "Blue Goblin", "Red Goblin", "Red Dragon"].includes(bossName)) {
                         continue;
                     }
 
-                    let statusState = 'alive'; // 'alive', 'cd', 'window'
+                    let statusState = 'alive';
                     let displayTimer = '';
 
                     if (bossName in bossesServidor) {
                         const targetUnix = bossesServidor[bossName];
                         const diffSec = targetUnix - ahoraUnix;
 
-                        // Manejo especial de ventana de 10h a 11h para los Goblins
                         if (["Yellow Goblin", "Blue Goblin", "Red Goblin"].includes(bossName)) {
                             const inicioVentanaUnix = targetUnix;
-                            const finVentanaUnix = targetUnix + 3600; // 1 hora extra (11h total)
+                            const finVentanaUnix = targetUnix + 3600;
 
                             if (ahoraUnix < inicioVentanaUnix) {
                                 statusState = 'cd';
@@ -359,20 +338,12 @@ def index():
 
 @app.route('/api/timers', methods=['GET'])
 def get_timers():
-    respuesta = {}
-    ahora = datetime.now()
-    for svr, bosses in timers_servidores.items():
-        respuesta[svr] = {}
-        for boss, dt in bosses.items():
-            # Para los goblins la ventana vence a las 11h (+660 min)
-            max_time = dt + timedelta(minutes=60) if "Goblin" in boss else dt
-            if max_time > ahora:
-                respuesta[svr][boss] = int(dt.timestamp())
+    timers_map, pcs_map = obtener_datos_nube()
     return jsonify({
-        "timers": respuesta, 
+        "timers": timers_map, 
         "cooldowns": COOLDOWNS, 
         "servers": SERVIDORES,
-        "ultimas_pcs": ultimas_pcs_reportadas
+        "ultimas_pcs": pcs_map
     })
 
 @app.route('/api/kill', methods=['POST'])
@@ -382,10 +353,8 @@ def kill_boss():
     boss = data.get("boss")
     pc_id = data.get("pc_id", "Desconocida")
 
-    if svr in timers_servidores and boss in COOLDOWNS:
-        timers_servidores[svr][boss] = datetime.now() + timedelta(minutes=COOLDOWNS[boss])
-        ultimas_pcs_reportadas[svr] = pc_id
-        guardar_disco()
+    if svr in SERVIDORES and boss in COOLDOWNS:
+        guardar_boss_nube(svr, boss, pc_id)
         return jsonify({"status": "ok"}), 200
     return jsonify({"status": "error"}), 400
 
@@ -395,9 +364,8 @@ def reset_boss():
     svr = data.get("server")
     boss = data.get("boss")
 
-    if svr in timers_servidores and boss in timers_servidores[svr]:
-        del timers_servidores[svr][boss]
-        guardar_disco()
+    if svr in SERVIDORES:
+        borrar_boss_nube(svr, boss)
         return jsonify({"status": "ok"}), 200
     return jsonify({"status": "error"}), 400
 
