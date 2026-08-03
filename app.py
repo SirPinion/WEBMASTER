@@ -12,9 +12,8 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# === CONFIGURACIÓN DE COOLDOWNS (en minutos) ===
+# === COOLDOWNS (en minutos) ===
 COOLDOWNS = {
-    # Bosses Servidores 1, 2 y 3
     "Muggron 1": 180,
     "Muggron 2": 180,
     "Dreadhorn 1": 60,
@@ -38,8 +37,6 @@ COOLDOWNS = {
     "White Wizard 2": 360,
     "Skeleton King 1": 360,
     "Skeleton King 2": 360,
-    
-    # Bosses exclusivos de Server 20 (Barracks / Crywolf)
     "Muggron Barracks 1": 180,
     "Muggron Barracks 2": 180,
     "Muggron Crywolf 1": 180,
@@ -48,15 +45,12 @@ COOLDOWNS = {
 
 SERVIDORES = ["Server 1", "Server 2", "Server 3", "Server 20"]
 
-# === FUNCIONES AUXILIARES ===
 def parsear_fecha_utc(dt_str):
-    if not dt_str:
-        return None
+    if not dt_str: return None
     try:
         clean_str = str(dt_str).replace('Z', '+00:00')
         dt_obj = datetime.fromisoformat(clean_str)
-        if dt_obj.tzinfo is None:
-            dt_obj = dt_obj.replace(tzinfo=timezone.utc)
+        if dt_obj.tzinfo is None: dt_obj = dt_obj.replace(tzinfo=timezone.utc)
         return dt_obj
     except Exception:
         return None
@@ -74,8 +68,7 @@ def obtener_datos_nube():
         if res.data:
             for row in res.data:
                 svr = row.get('server')
-                if not svr or svr not in SERVIDORES:
-                    continue
+                if not svr or svr not in SERVIDORES: continue
 
                 boss_timers = {}
                 raw_timers = row.get('timers') or {}
@@ -93,7 +86,6 @@ def obtener_datos_nube():
 
         return timers_map, pcs_map, pj_map, heartbeat_map
     except Exception as e:
-        print(f"❌ Error leyendo Supabase: {e}")
         return timers_map, pcs_map, pj_map, heartbeat_map
 
 def guardar_boss_nube(server, boss, pc_id, pj_name):
@@ -103,7 +95,6 @@ def guardar_boss_nube(server, boss, pc_id, pj_name):
         
         nueva_fecha = datetime.now(timezone.utc) + timedelta(minutes=COOLDOWNS[boss])
         current_timers[boss] = nueva_fecha.isoformat()
-        
         ahora_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
 
         supabase.table('timers_bosses').update({
@@ -113,7 +104,7 @@ def guardar_boss_nube(server, boss, pc_id, pj_name):
             'last_heartbeat': ahora_iso
         }).eq('server', server).execute()
     except Exception as e:
-        print(f"❌ Error guardando boss: {e}")
+        print(f"Error guardando: {e}")
 
 def actualizar_heartbeat_nube(server, pc_id, pj_name):
     try:
@@ -124,7 +115,7 @@ def actualizar_heartbeat_nube(server, pc_id, pj_name):
             'last_heartbeat': ahora_iso
         }).eq('server', server).execute()
     except Exception as e:
-        print(f"❌ Error heartbeat: {e}")
+        pass
 
 def borrar_boss_nube(server, boss):
     try:
@@ -134,9 +125,8 @@ def borrar_boss_nube(server, boss):
             del current_timers[boss]
             supabase.table('timers_bosses').update({'timers': current_timers}).eq('server', server).execute()
     except Exception as e:
-        print(f"❌ Error reseteando: {e}")
+        pass
 
-# === PLANTILLA WEB ===
 HTML_LAYOUT = """
 <!DOCTYPE html>
 <html lang="es">
@@ -211,33 +201,22 @@ HTML_LAYOUT = """
                 const res = await fetch('/api/timers');
                 estadoWeb = await res.json();
                 render();
-            } catch (e) { console.error("Error pidiendo timers:", e); }
+            } catch (e) {}
         }
 
-        // MANEJADOR GLOBAL DE CLIC (Garantiza ejecución sin romper etiquetas HTML)
-        document.addEventListener('click', async function(e) {
-            const target = e.target;
-            if (target && target.classList.contains('btn-action')) {
-                const action = target.getAttribute('data-action');
-                const server = target.getAttribute('data-server');
-                const boss = target.getAttribute('data-boss');
-
-                if (action && server && boss) {
-                    try {
-                        const res = await fetch('/api/' + action, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ server: server, boss: boss, pc_id: "Navegador Web", pj_name: "Web" })
-                        });
-                        if (res.ok) {
-                            pedirTimers();
-                        }
-                    } catch (err) {
-                        console.error("Error enviando acción:", err);
-                    }
-                }
+        // FUNCION DE CLICK DIRECTA Y GARANTIZADA
+        async function ejecutarAccion(endpoint, server, boss) {
+            try {
+                await fetch('/api/' + endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ server: server, boss: boss, pc_id: "Navegador Web", pj_name: "Web" })
+                });
+                pedirTimers();
+            } catch (err) {
+                console.error(err);
             }
-        });
+        }
 
         function render() {
             const container = document.getElementById('dashboard');
@@ -328,8 +307,8 @@ HTML_LAYOUT = """
                             </div>
                             ${displayTimer}
                             <div>
-                                <button class="btn-action" data-action="kill" data-server="${svr}" data-boss="${bossName}">⚔️ Kill</button>
-                                ${statusState !== 'alive' ? `<button class="btn-action btn-reset" data-action="reset" data-server="${svr}" data-boss="${bossName}">✖</button>` : ''}
+                                <button class="btn-action" onclick="ejecutarAccion('kill', '${svr}', '${bossName}')">⚔️ Kill</button>
+                                ${statusState !== 'alive' ? `<button class="btn-action btn-reset" onclick="ejecutarAccion('reset', '${svr}', '${bossName}')">✖</button>` : ''}
                             </div>
                         </div>
                     `;
@@ -346,7 +325,6 @@ HTML_LAYOUT = """
 </html>
 """
 
-# === RUTAS API ===
 @app.route('/')
 def index():
     return render_template_string(HTML_LAYOUT)
@@ -360,37 +338,36 @@ def get_timers():
     timers_map, pcs_map, pj_map, hb_map = obtener_datos_nube()
     return jsonify({"timers": timers_map, "cooldowns": COOLDOWNS, "servers": SERVIDORES, "ultimas_pcs": pcs_map, "ultimos_pjs": pj_map, "heartbeats": hb_map})
 
+def obtener_payload():
+    d = request.get_json(silent=True)
+    if not d: d = request.form.to_dict()
+    return d or {}
+
 @app.route('/api/heartbeat', methods=['POST'])
 def heartbeat():
-    data = request.get_json(silent=True) or request.form or {}
-    svr = data.get("server")
-    pc_id = data.get("pc_id", "Desconocida")
-    pj_name = data.get("pj_name", "Desconocido")
-    
+    data = obtener_payload()
+    svr, pc_id, pj_name = data.get("server"), data.get("pc_id", "Desconocida"), data.get("pj_name", "Desconocido")
     if svr in SERVIDORES:
         actualizar_heartbeat_nube(svr, pc_id, pj_name)
         return jsonify({"status": "ok"}), 200
-    return jsonify({"status": "error", "message": "Servidor no reconocido"}), 400
+    return jsonify({"status": "error"}), 400
 
 @app.route('/api/kill', methods=['POST'])
 def kill_boss():
-    data = request.get_json(silent=True) or request.form or {}
-    svr = data.get("server")
-    boss = data.get("boss")
+    data = obtener_payload()
+    svr, boss = data.get("server"), data.get("boss")
     pc_id = data.get("pc_id", "Navegador Web")
     pj_name = data.get("pj_name", "Web")
     
     if svr in SERVIDORES and boss in COOLDOWNS:
         guardar_boss_nube(svr, boss, pc_id, pj_name)
         return jsonify({"status": "ok"}), 200
-    return jsonify({"status": "error", "message": "Datos invalidos"}), 400
+    return jsonify({"status": "error"}), 400
 
 @app.route('/api/reset', methods=['POST'])
 def reset_boss():
-    data = request.get_json(silent=True) or request.form or {}
-    svr = data.get("server")
-    boss = data.get("boss")
-    
+    data = obtener_payload()
+    svr, boss = data.get("server"), data.get("boss")
     if svr in SERVIDORES:
         borrar_boss_nube(svr, boss)
         return jsonify({"status": "ok"}), 200
