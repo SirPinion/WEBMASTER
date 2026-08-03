@@ -1,7 +1,7 @@
 import os
 import json
 from datetime import datetime, timedelta, timezone
-from flask import Flask, render_template_string, jsonify, request, redirect, url_for
+from flask import Flask, render_template_string, jsonify, request
 from supabase import create_client, Client
 
 app = Flask(__name__)
@@ -12,7 +12,7 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# === COOLDOWNS (en minutos) ===
+# === CONFIGURACIÓN DE COOLDOWNS (en minutos) ===
 COOLDOWNS = {
     "Muggron 1": 180,
     "Muggron 2": 180,
@@ -85,7 +85,7 @@ def obtener_datos_nube():
                 heartbeat_map[svr] = row.get('last_heartbeat')
 
         return timers_map, pcs_map, pj_map, heartbeat_map
-    except Exception as e:
+    except Exception:
         return timers_map, pcs_map, pj_map, heartbeat_map
 
 def guardar_boss_nube(server, boss, pc_id, pj_name):
@@ -104,7 +104,7 @@ def guardar_boss_nube(server, boss, pc_id, pj_name):
             'last_heartbeat': ahora_iso
         }).eq('server', server).execute()
     except Exception as e:
-        print(f"Error guardando: {e}")
+        print(f"Error guardando boss: {e}")
 
 def actualizar_heartbeat_nube(server, pc_id, pj_name):
     try:
@@ -114,7 +114,7 @@ def actualizar_heartbeat_nube(server, pc_id, pj_name):
             'last_pj': pj_name,
             'last_heartbeat': ahora_iso
         }).eq('server', server).execute()
-    except Exception as e:
+    except Exception:
         pass
 
 def borrar_boss_nube(server, boss):
@@ -124,7 +124,7 @@ def borrar_boss_nube(server, boss):
         if boss in current_timers:
             del current_timers[boss]
             supabase.table('timers_bosses').update({'timers': current_timers}).eq('server', server).execute()
-    except Exception as e:
+    except Exception:
         pass
 
 HTML_LAYOUT = """
@@ -165,8 +165,6 @@ HTML_LAYOUT = """
         .btn-action:hover { background: var(--accent-glow); }
         .btn-reset { background: #2a2347; color: #aaa; margin-left: 4px; }
         .btn-reset:hover { background: #ff4757; color: #fff; }
-        .actions-group { display: flex; align-items: center; gap: 4px; }
-        form { margin: 0; padding: 0; display: inline; }
     </style>
 </head>
 <body>
@@ -205,6 +203,29 @@ HTML_LAYOUT = """
                 render();
             } catch (e) {}
         }
+
+        // EVENT LISTENER GLOBAL (CAPTURA EL CLIC DIRECTAMENTE EN EL DOCUMENTO)
+        document.addEventListener('click', async function(event) {
+            const btn = event.target.closest('.btn-action');
+            if (!btn) return;
+
+            const action = btn.getAttribute('data-action');
+            const server = btn.getAttribute('data-server');
+            const boss = btn.getAttribute('data-boss');
+
+            if (action && server && boss) {
+                try {
+                    await fetch('/api/' + action, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ server: server, boss: boss, pc_id: "Navegador Web", pj_name: "Web" })
+                    });
+                    pedirTimers();
+                } catch (e) {
+                    console.error("Error al enviar evento:", e);
+                }
+            }
+        });
 
         function render() {
             const container = document.getElementById('dashboard');
@@ -287,7 +308,6 @@ HTML_LAYOUT = """
 
                     if (statusState === 'alive') displayTimer = `<div class="timer-badge status-alive">🟢 ¡VIVO!</div>`;
 
-                    // FORMULARIOS NATIVOS: A PRUEBA DE FALLOS Y DE JAVASCRIPT
                     htmlContent += `
                         <div class="boss-row">
                             <div>
@@ -295,18 +315,9 @@ HTML_LAYOUT = """
                                 <div class="boss-respawn">${cdMinutos} min</div>
                             </div>
                             ${displayTimer}
-                            <div class="actions-group">
-                                <form action="/api/kill" method="POST">
-                                    <input type="hidden" name="server" value="${svr}">
-                                    <input type="hidden" name="boss" value="${bossName}">
-                                    <button type="submit" class="btn-action">⚔️ Kill</button>
-                                </form>
-                                ${statusState !== 'alive' ? `
-                                <form action="/api/reset" method="POST">
-                                    <input type="hidden" name="server" value="${svr}">
-                                    <input type="hidden" name="boss" value="${bossName}">
-                                    <button type="submit" class="btn-action btn-reset">✖</button>
-                                </form>` : ''}
+                            <div>
+                                <button class="btn-action" data-action="kill" data-server="${svr}" data-boss="${bossName}">⚔️ Kill</button>
+                                ${statusState !== 'alive' ? `<button class="btn-action btn-reset" data-action="reset" data-server="${svr}" data-boss="${bossName}">✖</button>` : ''}
                             </div>
                         </div>
                     `;
@@ -345,9 +356,7 @@ def obtener_payload():
 @app.route('/api/heartbeat', methods=['POST'])
 def heartbeat():
     data = obtener_payload()
-    svr = data.get("server")
-    pc_id = data.get("pc_id", "Desconocida")
-    pj_name = data.get("pj_name", "Desconocido")
+    svr, pc_id, pj_name = data.get("server"), data.get("pc_id", "Desconocida"), data.get("pj_name", "Desconocido")
     if svr in SERVIDORES:
         actualizar_heartbeat_nube(svr, pc_id, pj_name)
         return jsonify({"status": "ok"}), 200
@@ -356,28 +365,21 @@ def heartbeat():
 @app.route('/api/kill', methods=['POST'])
 def kill_boss():
     data = obtener_payload()
-    svr = data.get("server")
-    boss = data.get("boss")
+    svr, boss = data.get("server"), data.get("boss")
     pc_id = data.get("pc_id", "Navegador Web")
     pj_name = data.get("pj_name", "Web")
     
     if svr in SERVIDORES and boss in COOLDOWNS:
         guardar_boss_nube(svr, boss, pc_id, pj_name)
-        # Si la petición vino del navegador web, redirigir a la página principal
-        if request.form:
-            return redirect(url_for('index'))
         return jsonify({"status": "ok"}), 200
     return jsonify({"status": "error"}), 400
 
 @app.route('/api/reset', methods=['POST'])
 def reset_boss():
     data = obtener_payload()
-    svr = data.get("server")
-    boss = data.get("boss")
+    svr, boss = data.get("server"), data.get("boss")
     if svr in SERVIDORES:
         borrar_boss_nube(svr, boss)
-        if request.form:
-            return redirect(url_for('index'))
         return jsonify({"status": "ok"}), 200
     return jsonify({"status": "error"}), 400
 
