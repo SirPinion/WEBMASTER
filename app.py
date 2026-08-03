@@ -13,7 +13,6 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 # === CONEXIÓN A SUPABASE ===
-# Tip: Te recomendamos mover estas claves a variables de entorno por seguridad
 SUPABASE_URL = "https://sfdoobkwnaljgrmbzwvl.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmZG9vYmt3bmFsamdybWJ6d3ZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU3NDgzMjcsImV4cCI6MjEwMTMyNDMyN30.ZvkJqP9QiDFAi9syxeMnam6gOlVMTMhiD_wEudqt11I"
 
@@ -40,10 +39,6 @@ SERVIDORES = ["Server 1", "Server 2", "Server 3", "Server 20"]
 
 # === FUNCIONES AUXILIARES ===
 def parsear_fecha_utc(dt_str):
-    """
-    Convierte cualquier cadena ISO de Supabase a un objeto datetime UTC nativo.
-     Evita el crash por incompatibilidad de Timezones.
-    """
     if not dt_str:
         return None
     try:
@@ -62,24 +57,17 @@ def validar_usuario(username, password):
         usr_clean = username.strip() if username else ""
         pwd_clean = password.strip() if password else ""
 
-        print(f"🔍 Intentando validar usuario: '{usr_clean}'")
         res = supabase.table('usuarios').select('*').eq('username', usr_clean).eq('password', pwd_clean).execute()
         
         if res.data and len(res.data) > 0:
             user = res.data[0]
             if user.get('activo', False):
-                print(f"✅ Usuario valido y activo: {user['username']} (Rol: {user.get('role')})")
                 return user
-            else:
-                print(f"⚠️ Usuario encontrado pero está INACTIVO: {usr_clean}")
-        else:
-            print(f"❌ Usuario o contraseña incorrectos en Supabase para: '{usr_clean}'")
     except Exception as e:
         print(f"❌ Error grave validando usuario en Supabase: {e}")
     return None
 
 def obtener_datos_nube():
-    # Estructuras por defecto seguras
     timers_map = {svr: {} for svr in SERVIDORES}
     pcs_map = {svr: "Sin reportes" for svr in SERVIDORES}
     pj_map = {svr: "Desconocido" for svr in SERVIDORES}
@@ -111,7 +99,7 @@ def obtener_datos_nube():
 
         return timers_map, pcs_map, pj_map, heartbeat_map
     except Exception as e:
-        print(f"❌ Error leyendo Supabase en obtener_datos_nube: {e}")
+        print(f"❌ Error leyendo Supabase: {e}")
         return timers_map, pcs_map, pj_map, heartbeat_map
 
 def guardar_boss_nube(server, boss, pc_id, pj_name):
@@ -119,7 +107,6 @@ def guardar_boss_nube(server, boss, pc_id, pj_name):
         res = supabase.table('timers_bosses').select('timers').eq('server', server).execute()
         current_timers = (res.data[0]['timers'] if res.data and res.data[0].get('timers') else {})
         
-        # Fecha en UTC
         nueva_fecha = datetime.now(timezone.utc) + timedelta(minutes=COOLDOWNS[boss])
         current_timers[boss] = nueva_fecha.isoformat()
 
@@ -130,7 +117,7 @@ def guardar_boss_nube(server, boss, pc_id, pj_name):
             'last_heartbeat': datetime.now(timezone.utc).isoformat()
         }).eq('server', server).execute()
     except Exception as e:
-        print(f"❌ Error guardando en Supabase: {e}")
+        print(f"❌ Error guardando boss: {e}")
 
 def actualizar_heartbeat_nube(server, pc_id, pj_name):
     try:
@@ -150,7 +137,7 @@ def borrar_boss_nube(server, boss):
             del current_timers[boss]
             supabase.table('timers_bosses').update({'timers': current_timers}).eq('server', server).execute()
     except Exception as e:
-        print(f"❌ Error reseteando en Supabase: {e}")
+        print(f"❌ Error reseteando: {e}")
 
 # === PLANTILLAS HTML ===
 HTML_LOGIN = """
@@ -472,7 +459,7 @@ HTML_ADMIN = """
 </html>
 """
 
-# === RUTAS ===
+# === RUTAS Y API ===
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -483,9 +470,8 @@ def login():
             session.permanent = True
             session['user'] = user['username']
             session['role'] = user.get('role', 'user')
-            print(f"🔑 Sesion iniciada correctamente para: {session['user']} con rol {session['role']}")
             return redirect(url_for('index'))
-        return render_template_string(HTML_LOGIN, error="Usuario o contraseña incorrectos / Cuenta pendiente de activación")
+        return render_template_string(HTML_LOGIN, error="Usuario/contraseña incorrectos o cuenta inactiva")
     return render_template_string(HTML_LOGIN)
 
 @app.route('/register', methods=['GET', 'POST'])
@@ -496,12 +482,12 @@ def register():
         try:
             exist = supabase.table('usuarios').select('*').eq('username', usr).execute()
             if exist.data and len(exist.data) > 0:
-                return render_template_string(HTML_REGISTER, error="El nombre de usuario ya está ocupado")
+                return render_template_string(HTML_REGISTER, error="El usuario ya existe")
             
             supabase.table('usuarios').insert({'username': usr, 'password': pwd, 'activo': False, 'role': 'user'}).execute()
-            return render_template_string(HTML_LOGIN, msg="✅ Registro solicitado. El administrador debe activar tu cuenta.")
+            return render_template_string(HTML_LOGIN, msg="✅ Registro solicitado. Espera la activación.")
         except Exception as e:
-            return render_template_string(HTML_REGISTER, error=f"Error al registrar: {e}")
+            return render_template_string(HTML_REGISTER, error=f"Error: {e}")
     return render_template_string(HTML_REGISTER)
 
 @app.route('/logout')
@@ -546,6 +532,9 @@ def bot_auth():
     pwd = data.get("password", "").strip()
     user = validar_usuario(usr, pwd)
     if user:
+        session.permanent = True
+        session['user'] = user['username']
+        session['role'] = user.get('role', 'user')
         return jsonify({"status": "ok", "message": "Autorizado"}), 200
     return jsonify({"status": "error", "message": "Credenciales inválidas o cuenta desactivada"}), 401
 
@@ -562,7 +551,7 @@ def heartbeat():
     if svr in SERVIDORES:
         actualizar_heartbeat_nube(svr, pc_id, pj_name)
         return jsonify({"status": "ok"}), 200
-    return jsonify({"status": "error"}), 400
+    return jsonify({"status": "error", "message": "Servidor no reconocido"}), 400
 
 @app.route('/api/kill', methods=['POST'])
 def kill_boss():
@@ -571,7 +560,7 @@ def kill_boss():
     if svr in SERVIDORES and boss in COOLDOWNS:
         guardar_boss_nube(svr, boss, pc_id, pj_name)
         return jsonify({"status": "ok"}), 200
-    return jsonify({"status": "error"}), 400
+    return jsonify({"status": "error", "message": "Servidor o Boss inválido"}), 400
 
 @app.route('/api/reset', methods=['POST'])
 def reset_boss():
