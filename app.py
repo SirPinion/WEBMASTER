@@ -109,22 +109,25 @@ def guardar_boss_nube(server, boss, pc_id, pj_name):
         
         nueva_fecha = datetime.now(timezone.utc) + timedelta(minutes=COOLDOWNS[boss])
         current_timers[boss] = nueva_fecha.isoformat()
+        
+        ahora_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
 
         supabase.table('timers_bosses').update({
             'timers': current_timers,
             'last_pc': pc_id,
             'last_pj': pj_name,
-            'last_heartbeat': datetime.now(timezone.utc).isoformat()
+            'last_heartbeat': ahora_iso
         }).eq('server', server).execute()
     except Exception as e:
         print(f"❌ Error guardando boss: {e}")
 
 def actualizar_heartbeat_nube(server, pc_id, pj_name):
     try:
+        ahora_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
         supabase.table('timers_bosses').update({
             'last_pc': pc_id,
             'last_pj': pj_name,
-            'last_heartbeat': datetime.now(timezone.utc).isoformat()
+            'last_heartbeat': ahora_iso
         }).eq('server', server).execute()
     except Exception as e:
         print(f"❌ Error heartbeat: {e}")
@@ -319,11 +322,16 @@ HTML_LAYOUT = """
                 serverBlock.className = 'server-block';
                 const pcOrigen = ultimosReportes[svr] || 'Sin reportes';
                 const pjOrigen = ultimosPjs[svr] || 'Desconocido';
+                
                 let esOnline = false;
                 if (heartbeats[svr]) {
-                    const hbUnix = Math.floor(new Date(heartbeats[svr]).getTime() / 1000);
-                    if ((ahoraUnix - hbUnix) <= 30) { esOnline = true; }
+                    const fechaLimpia = heartbeats[svr].replace(' ', 'T');
+                    const hbUnix = Math.floor(new Date(fechaLimpia).getTime() / 1000);
+                    if (!isNaN(hbUnix) && Math.abs(ahoraUnix - hbUnix) <= 60) { 
+                        esOnline = true; 
+                    }
                 }
+
                 const statusHtml = esOnline 
                     ? `<span><span class="status-dot dot-online"></span><strong style="color:#2ecc71;">ONLINE</strong></span>`
                     : `<span><span class="status-dot dot-offline"></span><strong style="color:#ff4757;">OFFLINE</strong></span>`;
@@ -335,7 +343,7 @@ HTML_LAYOUT = """
                     </div>
                     <div class="bot-status-container">
                         <div class="pj-badge">👤 PJ: ${pjOrigen}</div>
-                        <div class="pc-badge">💻 PC: ${pcOrigen}</div>
+                        <div class="pc-badge">💻 PC / User: ${pcOrigen}</div>
                     </div>
                     <div class="boss-list">
                 `;
