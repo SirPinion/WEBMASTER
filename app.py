@@ -7,7 +7,7 @@ from supabase import create_client, Client
 app = Flask(__name__)
 
 # === CONEXIÓN A SUPABASE ===
-SUPABASE_URL = "https://sfdoobkwnaljgrmbzwvl.supabase.co/rest/v1/" # 👈 Pega tu URL de Supabase
+SUPABASE_URL = "https://sfdoobkwnaljgrmbzwvl.supabase.co" # 👈 Pega tu URL de Supabase
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmZG9vYmt3bmFsamdybWJ6d3ZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU3NDgzMjcsImV4cCI6MjEwMTMyNDMyN30.ZvkJqP9QiDFAi9syxeMnam6gOlVMTMhiD_wEudqt11I"               # 👈 Pega tu API Key de Supabase
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -53,7 +53,8 @@ def obtener_datos_nube():
 def guardar_boss_nube(server, boss, pc_id, pj_name):
     try:
         res = supabase.table('timers_bosses').select('timers').eq('server', server).execute()
-        current_timers = res.data[0]['timers'] if res.data else {}
+        # Protección contra valores nulos en la base de datos
+        current_timers = (res.data[0]['timers'] if res.data and res.data[0]['timers'] else {})
         
         nueva_fecha = datetime.now() + timedelta(minutes=COOLDOWNS[boss])
         current_timers[boss] = nueva_fecha.isoformat()
@@ -64,8 +65,19 @@ def guardar_boss_nube(server, boss, pc_id, pj_name):
             'last_pj': pj_name,
             'last_heartbeat': datetime.now().isoformat()
         }).eq('server', server).execute()
+        print(f"✅ Guardado con éxito: {boss} en {server}")
     except Exception as e:
-        print(f"Error guardando en Supabase: {e}")
+        print(f"❌ Error guardando en Supabase: {e}")
+
+def borrar_boss_nube(server, boss):
+    try:
+        res = supabase.table('timers_bosses').select('timers').eq('server', server).execute()
+        current_timers = (res.data[0]['timers'] if res.data and res.data[0]['timers'] else {})
+        if boss in current_timers:
+            del current_timers[boss]
+            supabase.table('timers_bosses').update({'timers': current_timers}).eq('server', server).execute()
+    except Exception as e:
+        print(f"❌ Error reseteando en Supabase: {e}")
 
 def actualizar_heartbeat_nube(server, pc_id, pj_name):
     try:
@@ -77,15 +89,6 @@ def actualizar_heartbeat_nube(server, pc_id, pj_name):
     except Exception as e:
         print(f"Error heartbeat: {e}")
 
-def borrar_boss_nube(server, boss):
-    try:
-        res = supabase.table('timers_bosses').select('timers').eq('server', server).execute()
-        current_timers = res.data[0]['timers'] if res.data else {}
-        if boss in current_timers:
-            del current_timers[boss]
-            supabase.table('timers_bosses').update({'timers': current_timers}).eq('server', server).execute()
-    except Exception as e:
-        print(f"Error reseteando en Supabase: {e}")
 
 HTML_LAYOUT = """
 <!DOCTYPE html>
